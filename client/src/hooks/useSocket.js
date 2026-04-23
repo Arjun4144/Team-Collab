@@ -25,9 +25,35 @@ export const useSocket = (socket) => {
       useStore.getState().updateUserStatus(userId, status);
     };
     const onMention = (data) => {
-      useStore.getState().setToast(data.message);
+      useStore.getState().setToast(data);
       // auto hide toast after 5s
-      setTimeout(() => useStore.getState().setToast(null), 5000);
+      setTimeout(() => {
+        const currentToast = useStore.getState().toast;
+        if (currentToast && currentToast.messageId === data.messageId) {
+          useStore.getState().setToast(null);
+        }
+      }, 5000);
+    };
+
+    const onChannelUpdated = () => {
+      useStore.getState().fetchChannels().then(() => {
+        const s = useStore.getState();
+        if (s.activeChannel) {
+          const updated = s.channels.find(c => c._id === s.activeChannel._id);
+          if (updated) useStore.getState().setActiveChannel(updated);
+        }
+      });
+    };
+
+    const onChannelDeleted = (channelId) => {
+      useStore.getState().fetchChannels().then(() => {
+        const s = useStore.getState();
+        if (s.activeChannel?._id === channelId) {
+          const nextActive = s.channels.length > 0 ? s.channels[0] : null;
+          useStore.getState().setActiveChannel(nextActive);
+          if (nextActive) useStore.getState().fetchMessages(nextActive._id);
+        }
+      });
     };
 
     const onConnect = () => {
@@ -35,6 +61,9 @@ export const useSocket = (socket) => {
       if (activeCh) {
         socket.emit('channel:join', activeCh._id);
       }
+      // Re-fetch users on connect/reconnect to get fresh online status
+      // (fixes race condition where user:online events fire before listeners are ready)
+      useStore.getState().fetchUsers();
     };
 
     socket.on('connect', onConnect);
@@ -47,6 +76,8 @@ export const useSocket = (socket) => {
     socket.on('user:online',      onUserOnline);
     socket.on('user:offline',     onUserOffline);
     socket.on('notification:mention', onMention);
+    socket.on('channel:updated',  onChannelUpdated);
+    socket.on('channel:deleted',  onChannelDeleted);
 
     return () => {
       socket.off('connect',          onConnect);
@@ -59,6 +90,8 @@ export const useSocket = (socket) => {
       socket.off('user:online',      onUserOnline);
       socket.off('user:offline',     onUserOffline);
       socket.off('notification:mention', onMention);
+      socket.off('channel:updated',  onChannelUpdated);
+      socket.off('channel:deleted',  onChannelDeleted);
     };
   }, [socket]);
 };

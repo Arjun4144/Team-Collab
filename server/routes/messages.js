@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const Message = require('../models/Message');
+const Channel = require('../models/Channel');
 const Task = require('../models/Task');
 const Decision = require('../models/Decision');
 const User = require('../models/User');
@@ -7,6 +8,12 @@ const { auth } = require('../middleware/auth');
 
 router.get('/channel/:channelId', auth, async (req, res) => {
   try {
+    // Verify membership
+    const channel = await Channel.findById(req.params.channelId);
+    if (!channel) return res.status(404).json({ error: 'Channel not found' });
+    const isMember = channel.members.some(m => m.toString() === req.user._id.toString());
+    if (!isMember) return res.status(403).json({ error: 'You are not a member of this channel' });
+
     const { page = 1, limit = 50, intent } = req.query;
     const query = { channel: req.params.channelId, threadParent: null };
     if (intent) query.intentType = intent;
@@ -32,6 +39,11 @@ router.get('/:id/thread', auth, async (req, res) => {
 router.post('/', auth, async (req, res) => {
   try {
     const { channel, content, intentType, priority, threadParent } = req.body;
+    // Verify membership
+    const ch = await Channel.findById(channel);
+    if (!ch) return res.status(404).json({ error: 'Channel not found' });
+    const isMember = ch.members.some(m => m.toString() === req.user._id.toString());
+    if (!isMember) return res.status(403).json({ error: 'You are not a member of this channel' });
     const message = await Message.create({
       channel, content, intentType: intentType || 'discussion',
       priority: priority || 'normal',
@@ -67,17 +79,23 @@ router.post('/', auth, async (req, res) => {
 
     await message.populate('sender', 'name avatar email status');
 
-    // Parse mentions and notify online users
     const mentionRegex = /@(\w+)/g;
-    const mentions = [...content.matchAll(mentionRegex)].map(m => m[1]);
+    const mentions = [...content.matchAll(mentionRegex)].map(m => m[1].toLowerCase());
     if (mentions.length > 0) {
-      const mentionedUsers = await User.find({ name: { $in: mentions.map(m => new RegExp(`^${m}$`, 'i')) } });
+      // Find all users in the channel first to optimize
+      const allUsers = await User.find({ _id: { $in: ch.members } });
+      // Filter those whose space-stripped name matches a mention
+      const mentionedUsers = allUsers.filter(u => 
+        mentions.includes(u.name.replace(/\s+/g, '').toLowerCase())
+      );
+      
       const io = req.app.get('io');
       const onlineUsers = req.app.get('onlineUsers');
       
       mentionedUsers.forEach(u => {
-        // Don't notify the sender themselves
-        if (u._id.toString() !== req.user._id.toString()) {
+        // Only notify if they are a member of the channel AND not the sender
+        const isUserMember = ch.members.some(memberId => memberId.toString() === u._id.toString());
+        if (isUserMember && u._id.toString() !== req.user._id.toString()) {
           const socketId = onlineUsers.get(u._id.toString());
           if (socketId && io) {
             io.to(socketId).emit('notification:mention', {

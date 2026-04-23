@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Channel = require('../models/Channel');
 const { JWT_SECRET } = require('../middleware/auth');
 
 const onlineUsers = new Map();
@@ -22,10 +23,18 @@ function initSocket(io) {
   io.on('connection', (socket) => {
     const userId = socket.user._id.toString();
     onlineUsers.set(userId, socket.id);
+    // Update DB status so fetchUsers() returns accurate data
+    User.findByIdAndUpdate(userId, { status: 'online' }).catch(() => {});
     io.emit('user:online', { userId, status: 'online' });
 
-    socket.on('channel:join', (channelId) => {
-      socket.join(`channel:${channelId}`);
+    socket.on('channel:join', async (channelId) => {
+      // Verify membership before allowing room join
+      try {
+        const channel = await Channel.findById(channelId);
+        if (channel && channel.members.some(m => m.toString() === userId)) {
+          socket.join(`channel:${channelId}`);
+        }
+      } catch {}
     });
 
     socket.on('channel:leave', (channelId) => {

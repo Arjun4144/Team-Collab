@@ -22,7 +22,7 @@ export default function MessageBubble({ message, onReply }) {
   };
 
   return (
-    <div style={{
+    <div id={`msg-${message._id}`} style={{
       ...styles.row,
       justifyContent: isOwn ? 'flex-end' : 'flex-start',
       animation: 'fadeIn 0.2s ease both'

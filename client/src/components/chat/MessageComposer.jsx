@@ -2,18 +2,24 @@ import React, { useState, useRef, useCallback } from 'react';
 import useStore from '../../store/useStore';
 import api from '../../utils/api';
 import { getSocket } from '../../utils/socket';
-import { intentConfig, priorityConfig } from '../../utils/helpers';
+import { intentConfig, priorityConfig, getInitials } from '../../utils/helpers';
 
 const INTENTS  = Object.keys(intentConfig);
 const PRIORITIES = Object.keys(priorityConfig);
 
 export default function MessageComposer({ threadParent = null, onSent }) {
-  const { activeChannel, user, addMessage } = useStore();
+  const { activeChannel, user, addMessage, users } = useStore();
   const [content, setContent]   = useState('');
   const [intent, setIntent]     = useState('discussion');
   const [priority, setPriority] = useState('normal');
   const [sending, setSending]   = useState(false);
+  
+  // Mention state
+  const [mentionState, setMentionState] = useState({ show: false, query: '', startIndex: -1 });
+  const [mentionIndex, setMentionIndex] = useState(0);
+
   const typingTimer = useRef(null);
+  const textareaRef = useRef(null);
 
   const emitTyping = useCallback(() => {
     if (!activeChannel) return;
@@ -25,8 +31,75 @@ export default function MessageComposer({ threadParent = null, onSent }) {
     }, 2000);
   }, [activeChannel]);
 
+  // Compute mention suggestions
+  const channelMembers = activeChannel?.members || [];
+  const mentionSuggestions = mentionState.show
+    ? channelMembers.filter(u => u.name.replace(/\s+/g, '').toLowerCase().includes(mentionState.query.toLowerCase()))
+    : [];
+
+  const handleTextChange = (e) => {
+    const val = e.target.value;
+    setContent(val);
+    emitTyping();
+
+    const cursor = e.target.selectionStart;
+    const textBeforeCursor = val.slice(0, cursor);
+    const match = textBeforeCursor.match(/@([a-zA-Z0-9_]*)$/);
+    if (match) {
+      setMentionState({ show: true, query: match[1], startIndex: match.index });
+      setMentionIndex(0);
+    } else {
+      setMentionState({ show: false, query: '', startIndex: -1 });
+    }
+  };
+
+  const insertMention = (targetUser) => {
+    if (!targetUser) return;
+    const before = content.slice(0, mentionState.startIndex);
+    const formattedName = targetUser.name.replace(/\s+/g, '');
+    const after = content.slice(mentionState.startIndex + mentionState.query.length + 1);
+    
+    const newContent = `${before}@${formattedName} ${after}`;
+    setContent(newContent);
+    setMentionState({ show: false, query: '', startIndex: -1 });
+    
+    // Focus back on textarea
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (mentionState.show && mentionSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionIndex(i => (i + 1) % mentionSuggestions.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex(i => (i - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        insertMention(mentionSuggestions[mentionIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setMentionState({ show: false, query: '', startIndex: -1 });
+        return;
+      }
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send(e);
+    }
+  };
+
   const send = async (e) => {
-    e.preventDefault();
+    e?.preventDefault();
     if (!content.trim() || !activeChannel) return;
     setSending(true);
     try {
@@ -41,6 +114,7 @@ export default function MessageComposer({ threadParent = null, onSent }) {
       const s = getSocket();
       s?.emit('message:send', data);
       setContent('');
+      setMentionState({ show: false, query: '', startIndex: -1 });
       onSent?.();
       s?.emit('typing:stop', { channelId: activeChannel._id });
     } catch (err) {
@@ -54,7 +128,6 @@ export default function MessageComposer({ threadParent = null, onSent }) {
 
   return (
     <form onSubmit={send} style={styles.form}>
-      {/* Intent + Priority selectors */}
       <div style={styles.toolbar}>
         <div style={styles.intentRow}>
           {INTENTS.map(i => (
@@ -75,7 +148,6 @@ export default function MessageComposer({ threadParent = null, onSent }) {
         </div>
       </div>
 
-      {/* Intent indicator */}
       <div style={styles.intentIndicator}>
         <span style={{ color: intentColor[intent], fontSize: 13 }}>{cfg.icon} {cfg.label}</span>
         {intent === 'action'   && <span style={styles.hint}>→ Will auto-create a task</span>}
@@ -84,21 +156,40 @@ export default function MessageComposer({ threadParent = null, onSent }) {
         {threadParent && <span style={styles.hint}>Replying in thread</span>}
       </div>
 
-      {/* Textarea */}
-      <div style={styles.inputRow}>
-        <textarea
-          style={styles.textarea}
-          placeholder={`Write a ${intent}…`}
-          value={content}
-          onChange={e => { setContent(e.target.value); emitTyping(); }}
-          onKeyDown={e => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e); }
-          }}
-          rows={3}
-        />
-        <button type="submit" disabled={!content.trim() || sending} style={styles.sendBtn}>
-          {sending ? '…' : '↑'}
-        </button>
+      <div style={{ position: 'relative' }}>
+        {mentionState.show && mentionSuggestions.length > 0 && (
+          <ul style={styles.mentionList}>
+            {mentionSuggestions.map((u, idx) => (
+              <li 
+                key={u._id} 
+                style={{ ...styles.mentionItem, ...(idx === mentionIndex ? styles.mentionItemActive : {}) }}
+                onClick={() => insertMention(u)}
+                onMouseEnter={() => setMentionIndex(idx)}
+              >
+                <div style={styles.avatar}>{getInitials(u.name)}</div>
+                <div>
+                  <div style={styles.mentionName}>{u.name}</div>
+                  <div style={styles.mentionRole}>{u.role}</div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        
+        <div style={styles.inputRow}>
+          <textarea
+            ref={textareaRef}
+            style={styles.textarea}
+            placeholder={`Write a ${intent}… (type @ to mention members)`}
+            value={content}
+            onChange={handleTextChange}
+            onKeyDown={handleKeyDown}
+            rows={3}
+          />
+          <button type="submit" disabled={!content.trim() || sending} style={styles.sendBtn}>
+            {sending ? '…' : '↑'}
+          </button>
+        </div>
       </div>
       <div style={styles.hint2}>Enter to send · Shift+Enter for new line</div>
     </form>
@@ -146,5 +237,23 @@ const styles = {
     flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
     transition: 'opacity 0.15s'
   },
-  hint2: { fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }
+  hint2: { fontSize: 11, color: 'var(--text-muted)', marginTop: 6 },
+  mentionList: {
+    position: 'absolute', bottom: '100%', left: 0, marginBottom: 8,
+    background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+    borderRadius: 8, padding: '6px', margin: 0, listStyle: 'none',
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+    zIndex: 50, maxHeight: 200, overflowY: 'auto', minWidth: 200
+  },
+  mentionItem: {
+    padding: '6px 10px', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8,
+    cursor: 'pointer', transition: 'background 0.1s'
+  },
+  mentionItemActive: { background: 'var(--bg-active)' },
+  avatar: {
+    width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: '#fff',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700
+  },
+  mentionName: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' },
+  mentionRole: { fontSize: 11, color: 'var(--text-muted)' }
 };

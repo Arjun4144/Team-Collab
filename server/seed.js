@@ -41,10 +41,10 @@ async function seed() {
 
   // ── Channels ───────────────────────────────────────────────
   const [general, engineering, product, design] = await Channel.insertMany([
-    { name: 'general',     description: 'Company-wide announcements',   type: 'public',  createdBy: alice._id, members: [alice._id, bob._id, carol._id, dave._id] },
-    { name: 'engineering', description: 'Engineering team discussions', type: 'public',  createdBy: alice._id, members: [alice._id, bob._id, carol._id] },
-    { name: 'product',     description: 'Product decisions & roadmap',  type: 'public',  createdBy: carol._id, members: [alice._id, bob._id, carol._id, dave._id] },
-    { name: 'design',      description: 'Design reviews & critiques',   type: 'private', createdBy: carol._id, members: [alice._id, carol._id] },
+    { name: 'general',     description: 'Company-wide announcements',   type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [alice._id] },
+    { name: 'engineering', description: 'Engineering team discussions', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id], admins: [alice._id] },
+    { name: 'product',     description: 'Product decisions & roadmap',  type: 'private', createdBy: carol._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [carol._id] },
+    { name: 'design',      description: 'Design reviews & critiques',   type: 'private', createdBy: carol._id, members: [alice._id, carol._id], admins: [carol._id] },
   ]);
   console.log('Created 4 channels');
 

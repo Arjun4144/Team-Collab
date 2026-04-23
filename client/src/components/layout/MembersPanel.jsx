@@ -3,11 +3,21 @@ import useStore from '../../store/useStore';
 import { getInitials, statusConfig } from '../../utils/helpers';
 
 export default function MembersPanel() {
-  const { activeChannel, users } = useStore();
+  const { activeChannel, users, user: currentUser, removeMember, promoteMember, demoteMember } = useStore();
 
-  const members = activeChannel?.type === 'public'
-    ? users
-    : (activeChannel?.members || []);
+  const isCurrentUserAdmin = activeChannel?.admins?.includes(currentUser?._id);
+
+  // Build a userId→status lookup from the live `users` store (kept fresh by socket events)
+  const statusMap = new Map(users.map(u => [u._id, u.status]));
+
+  const memberList = activeChannel?.members || [];
+
+  // Enrich each member with live status from the store
+  const members = memberList.map(u => ({
+    ...u,
+    status: statusMap.get(u._id) || u.status || 'offline',
+    isAdmin: activeChannel?.admins?.includes(u._id)
+  }));
 
   const grouped = {
     online:  members.filter(u => u.status === 'online'),
@@ -26,9 +36,19 @@ export default function MembersPanel() {
             <span style={{ ...styles.dot, background: statusConfig[u.status || 'offline']?.color }} />
           </div>
           <div style={styles.info}>
-            <div style={styles.name}>{u.name}</div>
+            <div style={styles.name}>{u.name} {u.isAdmin && <span style={styles.adminBadge}>ADMIN</span>}</div>
             <div style={styles.role}>{u.role} · {u.email}</div>
           </div>
+          {isCurrentUserAdmin && u._id !== currentUser?._id && (
+            <div style={styles.actions}>
+              {u.isAdmin ? (
+                <button onClick={() => demoteMember(activeChannel._id, u._id)} title="Demote to Member" style={styles.actionBtn}>↓</button>
+              ) : (
+                <button onClick={() => promoteMember(activeChannel._id, u._id)} title="Promote to Admin" style={styles.actionBtn}>↑</button>
+              )}
+              <button onClick={() => removeMember(activeChannel._id, u._id)} title="Remove Member" style={{ ...styles.actionBtn, color: '#ef4444' }}>×</button>
+            </div>
+          )}
         </div>
       ))}
     </div>
@@ -78,5 +98,8 @@ const styles = {
   },
   info: { flex: 1, minWidth: 0 },
   name: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  role: { fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+  role: { fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  adminBadge: { fontSize: 9, background: 'var(--accent)', color: '#fff', padding: '2px 4px', borderRadius: 4, marginLeft: 6, verticalAlign: 'middle', fontWeight: 800 },
+  actions: { display: 'flex', gap: 4 },
+  actionBtn: { background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px 6px', fontSize: 11, fontWeight: 600 }
 };

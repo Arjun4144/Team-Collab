@@ -11,7 +11,7 @@ import DecisionsPanel from '../components/decisions/DecisionsPanel';
 import MembersPanel from '../components/layout/MembersPanel';
 
 export default function WorkspacePage() {
-  const { token, user, setUser, fetchChannels, fetchTasks, fetchDecisions, fetchUsers, rightPanel, activeThread, toast } = useStore();
+  const { token, user, setUser, fetchChannels, fetchTasks, fetchDecisions, fetchUsers, rightPanel, activeThread, toast, channels, setActiveChannel, setToast } = useStore();
   const [socket, setSocket] = useState(null);
 
   useSocket(socket);
@@ -56,9 +56,19 @@ export default function WorkspacePage() {
 
       {/* Toast Notification */}
       {toast && (
-        <div style={styles.toast}>
+        <div style={{...styles.toast, cursor: toast.channelId ? 'pointer' : 'default'}} onClick={() => {
+          if (toast.channelId) {
+            const ch = channels.find(c => c._id === toast.channelId);
+            if (ch) setActiveChannel(ch);
+            setTimeout(() => {
+              const el = document.getElementById(`msg-${toast.messageId}`);
+              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 300);
+          }
+          setToast(null);
+        }}>
           <span style={styles.toastIcon}>🔔</span>
-          <span style={styles.toastText}>{toast}</span>
+          <span style={styles.toastText}>{toast.message || toast}</span>
         </div>
       )}
     </div>

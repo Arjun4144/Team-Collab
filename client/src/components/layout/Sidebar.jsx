@@ -6,9 +6,11 @@ import api from '../../utils/api';
 
 export default function Sidebar() {
   const { user, channels, activeChannel, setActiveChannel, fetchMessages,
-          setRightPanel, rightPanel, logout, fetchChannels } = useStore();
+          setRightPanel, rightPanel, logout, fetchChannels, joinChannelByInvite } = useStore();
   const [showNewChannel, setShowNewChannel] = useState(false);
-  const [newCh, setNewCh] = useState({ name: '', description: '', type: 'public' });
+  const [showJoinChannel, setShowJoinChannel] = useState(false);
+  const [newCh, setNewCh] = useState({ name: '', description: '' });
+  const [inviteCodeInput, setInviteCodeInput] = useState('');
 
   const selectChannel = (ch) => {
     if (activeChannel?._id !== ch._id) {
@@ -26,8 +28,23 @@ export default function Sidebar() {
       await api.post('/channels', newCh);
       await fetchChannels();
       setShowNewChannel(false);
-      setNewCh({ name: '', description: '', type: 'public' });
+      setNewCh({ name: '', description: '' });
     } catch {}
+  };
+
+  const joinChannel = async (e) => {
+    e.preventDefault();
+    try {
+      // support full URL or just code
+      const code = inviteCodeInput.split('/').pop();
+      const channel = await joinChannelByInvite(code);
+      await fetchChannels();
+      setShowJoinChannel(false);
+      setInviteCodeInput('');
+      selectChannel(channel);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to join channel');
+    }
   };
 
   const statusColor = statusConfig[user?.status || 'offline']?.color;
@@ -64,19 +81,25 @@ export default function Sidebar() {
       <div style={styles.section}>
         <div style={styles.sectionHeader}>
           <span style={styles.sectionLabel}>Channels</span>
-          <button onClick={() => setShowNewChannel(v => !v)} style={styles.addBtn}>+</button>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <button onClick={() => { setShowJoinChannel(v => !v); setShowNewChannel(false); }} style={styles.addBtn} title="Join via Invite">🔗</button>
+            <button onClick={() => { setShowNewChannel(v => !v); setShowJoinChannel(false); }} style={styles.addBtn} title="Create Channel">+</button>
+          </div>
         </div>
 
         {showNewChannel && (
           <form onSubmit={createChannel} style={styles.newChForm}>
             <input style={styles.miniInput} placeholder="channel-name" required
               value={newCh.name} onChange={e => setNewCh(f => ({ ...f, name: e.target.value }))} />
-            <select style={styles.miniInput}
-              value={newCh.type} onChange={e => setNewCh(f => ({ ...f, type: e.target.value }))}>
-              <option value="public">Public</option>
-              <option value="private">Private</option>
-            </select>
             <button type="submit" style={styles.miniBtn}>Create</button>
+          </form>
+        )}
+
+        {showJoinChannel && (
+          <form onSubmit={joinChannel} style={styles.newChForm}>
+            <input style={styles.miniInput} placeholder="Paste invite code or URL" required
+              value={inviteCodeInput} onChange={e => setInviteCodeInput(e.target.value)} />
+            <button type="submit" style={styles.miniBtn}>Join</button>
           </form>
         )}
 
@@ -84,7 +107,7 @@ export default function Sidebar() {
           {channels.map(ch => (
             <button key={ch._id} onClick={() => selectChannel(ch)}
               style={{ ...styles.channelItem, ...(activeChannel?._id === ch._id ? styles.channelActive : {}) }}>
-              <span style={styles.chPrefix}>{ch.type === 'private' ? '🔒' : '#'}</span>
+              <span style={styles.chPrefix}>🔒</span>
               <span style={styles.chName}>{ch.name}</span>
             </button>
           ))}

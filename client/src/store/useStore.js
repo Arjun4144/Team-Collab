@@ -72,6 +72,13 @@ const useStore = create((set, get) => ({
   // UI
   toast: null,
   setToast: (toast) => set({ toast }),
+  showToast: (message) => {
+    set({ toast: message });
+    setTimeout(() => {
+      // Clear if it's still the same message
+      if (get().toast === message) set({ toast: null });
+    }, 3000);
+  },
   rightPanel: null, // 'tasks' | 'decisions' | 'members'
   setRightPanel: (panel) => set(s => ({ rightPanel: s.rightPanel === panel ? null : panel })),
   activeThread: null,
@@ -117,6 +124,70 @@ const useStore = create((set, get) => ({
       const { data } = await api.get('/users');
       set({ users: data });
     } catch {}
+  },
+  generateInviteLink: async (channelId) => {
+    try {
+      const { data } = await api.post(`/channels/${channelId}/invite`);
+      return data;
+    } catch (err) {
+      throw err;
+    }
+  },
+  joinChannelByInvite: async (inviteCode) => {
+    try {
+      const { data } = await api.post(`/channels/join/${inviteCode}`);
+      if (!data.alreadyMember) {
+        set(s => ({ channels: [data.channel, ...s.channels] }));
+      }
+      return data.channel;
+    } catch (err) {
+      throw err;
+    }
+  },
+  deleteChannel: async (channelId) => {
+    await api.delete(`/channels/${channelId}`);
+    await get().fetchChannels();
+    const s = get();
+    let nextActive = s.activeChannel;
+    if (s.activeChannel?._id === channelId) {
+      nextActive = s.channels.length > 0 ? s.channels[0] : null;
+      if (nextActive) {
+        s.fetchMessages(nextActive._id);
+      }
+    }
+    set({ activeChannel: nextActive });
+  },
+  renameChannel: async (channelId, name, description) => {
+    await api.patch(`/channels/${channelId}`, { name, description });
+    await get().fetchChannels();
+    const s = get();
+    if (s.activeChannel?._id === channelId) {
+      const updatedChannel = s.channels.find(c => c._id === channelId);
+      if (updatedChannel) {
+        set({ activeChannel: updatedChannel });
+      }
+    }
+  },
+  removeMember: async (channelId, userId) => {
+    const { data } = await api.delete(`/channels/${channelId}/members/${userId}`);
+    set(s => ({
+      channels: s.channels.map(c => c._id === channelId ? data : c),
+      activeChannel: s.activeChannel?._id === channelId ? data : s.activeChannel
+    }));
+  },
+  promoteMember: async (channelId, userId) => {
+    const { data } = await api.post(`/channels/${channelId}/admins/${userId}`);
+    set(s => ({
+      channels: s.channels.map(c => c._id === channelId ? data : c),
+      activeChannel: s.activeChannel?._id === channelId ? data : s.activeChannel
+    }));
+  },
+  demoteMember: async (channelId, userId) => {
+    const { data } = await api.delete(`/channels/${channelId}/admins/${userId}`);
+    set(s => ({
+      channels: s.channels.map(c => c._id === channelId ? data : c),
+      activeChannel: s.activeChannel?._id === channelId ? data : s.activeChannel
+    }));
   }
 }));
 
