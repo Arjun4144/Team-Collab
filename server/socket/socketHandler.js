@@ -1,0 +1,67 @@
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const { JWT_SECRET } = require('../middleware/auth');
+
+const onlineUsers = new Map();
+
+function initSocket(io) {
+  io.use(async (socket, next) => {
+    try {
+      const token = socket.handshake.auth.token;
+      if (!token) return next(new Error('Authentication required'));
+      const decoded = jwt.verify(token, JWT_SECRET);
+      const user = await User.findById(decoded.id).select('-password');
+      if (!user) return next(new Error('User not found'));
+      socket.user = user;
+      next();
+    } catch {
+      next(new Error('Invalid token'));
+    }
+  });
+
+  io.on('connection', (socket) => {
+    const userId = socket.user._id.toString();
+    onlineUsers.set(userId, socket.id);
+    io.emit('user:online', { userId, status: 'online' });
+
+    socket.on('channel:join', (channelId) => {
+      socket.join(`channel:${channelId}`);
+    });
+
+    socket.on('channel:leave', (channelId) => {
+      socket.leave(`channel:${channelId}`);
+    });
+
+    socket.on('message:send', (message) => {
+      const channelId = message.channel?._id || message.channel;
+      socket.to(`channel:${channelId}`).emit('message:new', message);
+    });
+
+    socket.on('message:resolve', (data) => {
+      const channelId = data.channel?._id || data.channel;
+      socket.to(`channel:${channelId}`).emit('message:resolved', data);
+    });
+
+    socket.on('task:update', (task) => {
+      io.emit('task:updated', task);
+    });
+
+    socket.on('typing:start', ({ channelId }) => {
+      socket.to(`channel:${channelId}`).emit('typing:start', {
+        userId, userName: socket.user.name
+      });
+    });
+
+    socket.on('typing:stop', ({ channelId }) => {
+      socket.to(`channel:${channelId}`).emit('typing:stop', { userId });
+    });
+
+    socket.on('disconnect', async () => {
+      onlineUsers.delete(userId);
+      io.emit('user:offline', { userId, status: 'offline' });
+      await User.findByIdAndUpdate(userId, { status: 'offline' });
+    });
+  });
+}
+
+module.exports = { initSocket, onlineUsers };
