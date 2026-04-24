@@ -36,8 +36,8 @@ export default function MembersPanel() {
             <span style={{ ...styles.dot, background: statusConfig[u.status || 'offline']?.color }} />
           </div>
           <div style={styles.info}>
-            <div style={styles.name}>{u.name} {u.isAdmin && <span style={styles.adminBadge}>ADMIN</span>}</div>
-            <div style={styles.role}>{u.role} · {u.email}</div>
+            <div style={styles.name}>{u.name}</div>
+            <div style={styles.role}>{u.isAdmin ? 'Admin' : 'Member'} · {u.email}</div>
           </div>
           {isCurrentUserAdmin && u._id !== currentUser?._id && (
             <div style={styles.actions}>
@@ -99,7 +99,6 @@ const styles = {
   info: { flex: 1, minWidth: 0 },
   name: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   role: { fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  adminBadge: { fontSize: 9, background: 'var(--accent)', color: '#fff', padding: '2px 4px', borderRadius: 4, marginLeft: 6, verticalAlign: 'middle', fontWeight: 800 },
   actions: { display: 'flex', gap: 4 },
   actionBtn: { background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', padding: '2px 6px', fontSize: 11, fontWeight: 600 }
 };

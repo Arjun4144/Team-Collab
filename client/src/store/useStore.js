@@ -21,44 +21,107 @@ const useStore = create((set, get) => ({
   activeChannel: null,
   setChannels: (channels) => set({ channels }),
   setActiveChannel: (channel) => set({ activeChannel: channel }),
+  selectChannel: async (ch) => {
+    const s = get();
+    if (s.activeChannel?._id !== ch._id) {
+      import('../utils/socket').then(({ getSocket }) => {
+        const socket = getSocket();
+        socket?.emit('channel:join', ch._id);
+      });
+      set({ activeChannel: ch });
+      s.fetchMessages(ch._id);
+      try {
+        s.markChannelRead(ch._id);
+        await api.post(`/messages/channel/${ch._id}/read`);
+      } catch {}
+    }
+  },
   addChannel: (channel) => set(s => ({ channels: [channel, ...s.channels] })),
 
   // Messages
   messages: {},
-  setMessages: (channelId, msgs) => set(s => ({
-    messages: { ...s.messages, [channelId]: msgs }
-  })),
+  setMessages: (channelId, msgs) => set(s => {
+    const userId = s.user?._id ? String(s.user._id) : null;
+    const activeChId = s.activeChannel?._id ? String(s.activeChannel._id) : null;
+    const targetChId = String(channelId);
+    const isActive = activeChId === targetChId;
+    
+    const processedMsgs = msgs.map(m => {
+      let readByArray = Array.isArray(m.readBy) ? m.readBy : [];
+      readByArray = readByArray.map(rb => (typeof rb === 'object' && rb !== null && rb._id) ? String(rb._id) : String(rb));
+      
+      if (isActive && userId && !readByArray.includes(userId)) {
+        readByArray = [...readByArray, userId];
+      }
+      return { ...m, readBy: readByArray };
+    });
+
+    return {
+      messages: { ...s.messages, [channelId]: processedMsgs }
+    };
+  }),
   markChannelRead: (channelId) => set(s => {
-    const userId = s.user?._id;
+    const userId = s.user?._id ? String(s.user._id) : null;
     if (!userId || !s.messages[channelId]) return s;
     return {
       messages: {
         ...s.messages,
-        [channelId]: s.messages[channelId].map(m => 
-          m.readBy?.includes(userId) ? m : { ...m, readBy: [...(m.readBy || []), userId] }
-        )
+        [channelId]: s.messages[channelId].map(m => {
+          let readByArray = Array.isArray(m.readBy) ? m.readBy : [];
+          readByArray = readByArray.map(rb => (typeof rb === 'object' && rb !== null && rb._id) ? String(rb._id) : String(rb));
+          
+          if (!readByArray.includes(userId)) {
+            return { ...m, readBy: [...readByArray, userId] };
+          }
+          return { ...m, readBy: readByArray };
+        })
       }
     };
   }),
   addMessage: (msg) => {
-    const channelId = msg.channel?._id || msg.channel;
-    set(s => ({
-      messages: {
-        ...s.messages,
-        [channelId]: [...(s.messages[channelId] || []), msg]
+    const rawChannelId = msg.channel?._id || msg.channel;
+    const channelId = String(rawChannelId);
+    
+    set(s => {
+      const userId = s.user?._id ? String(s.user._id) : null;
+      const activeChId = s.activeChannel?._id ? String(s.activeChannel._id) : null;
+      const isActive = activeChId === channelId;
+      
+      let readByArray = Array.isArray(msg.readBy) ? msg.readBy : [];
+      readByArray = readByArray.map(rb => (typeof rb === 'object' && rb !== null && rb._id) ? String(rb._id) : String(rb));
+      
+      if (isActive && userId && !readByArray.includes(userId)) {
+        readByArray = [...readByArray, userId];
       }
-    }));
+      
+      const processedMsg = { ...msg, readBy: readByArray };
+      
+      return {
+        messages: {
+          ...s.messages,
+          [channelId]: [...(s.messages[channelId] || []), processedMsg]
+        }
+      };
+    });
   },
   updateMessage: (updated) => {
-    const channelId = updated.channel?._id || updated.channel;
-    set(s => ({
-      messages: {
-        ...s.messages,
-        [channelId]: (s.messages[channelId] || []).map(m =>
-          m._id === updated._id ? updated : m
-        )
-      }
-    }));
+    const rawChannelId = updated.channel?._id || updated.channel;
+    const channelId = String(rawChannelId);
+    
+    set(s => {
+      let readByArray = Array.isArray(updated.readBy) ? updated.readBy : [];
+      readByArray = readByArray.map(rb => (typeof rb === 'object' && rb !== null && rb._id) ? String(rb._id) : String(rb));
+      const processedUpdated = { ...updated, readBy: readByArray };
+
+      return {
+        messages: {
+          ...s.messages,
+          [channelId]: (s.messages[channelId] || []).map(m =>
+            m._id === updated._id ? processedUpdated : m
+          )
+        }
+      };
+    });
   },
   hideMessage: async (channelId, messageId) => {
     try {
@@ -215,10 +278,25 @@ const useStore = create((set, get) => ({
   // Typing
   typing: {},
   setTyping: (channelId, userId, userName, isTyping) => set(s => {
+    if (String(s.user?._id) === String(userId)) return s;
+
     const t = { ...s.typing };
     if (!t[channelId]) t[channelId] = {};
-    if (isTyping) t[channelId][userId] = userName;
-    else delete t[channelId][userId];
+    
+    const key = `${channelId}_${userId}`;
+    if (window._typingTimeouts && window._typingTimeouts[key]) {
+      clearTimeout(window._typingTimeouts[key]);
+    }
+    if (!window._typingTimeouts) window._typingTimeouts = {};
+
+    if (isTyping) {
+      t[channelId][userId] = userName;
+      window._typingTimeouts[key] = setTimeout(() => {
+        get().setTyping(channelId, userId, null, false);
+      }, 3000);
+    } else {
+      delete t[channelId][userId];
+    }
     return { typing: t };
   }),
 

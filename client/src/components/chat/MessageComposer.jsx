@@ -4,13 +4,13 @@ import api from '../../utils/api';
 import { getSocket } from '../../utils/socket';
 import { intentConfig, priorityConfig, getInitials } from '../../utils/helpers';
 
-const INTENTS  = Object.keys(intentConfig);
+const INTENTS  = Object.keys(intentConfig).filter(i => i !== 'discussion');
 const PRIORITIES = Object.keys(priorityConfig);
 
-export default function MessageComposer({ threadParent = null, onSent }) {
-  const { activeChannel, user, addMessage, users, replyingTo, setReplyingTo } = useStore();
+export default function MessageComposer({ onSent }) {
+  const { activeChannel, user, addMessage, users, replyingTo, setReplyingTo, activeThread, setActiveThread } = useStore();
   const [content, setContent]   = useState('');
-  const [intent, setIntent]     = useState('discussion');
+  const [intent, setIntent]     = useState('');
   const [priority, setPriority] = useState('normal');
   const [sending, setSending]   = useState(false);
   const [file, setFile]         = useState(null);
@@ -20,9 +20,18 @@ export default function MessageComposer({ threadParent = null, onSent }) {
   const [mentionState, setMentionState] = useState({ show: false, query: '', startIndex: -1 });
   const [mentionIndex, setMentionIndex] = useState(0);
 
+  const contextMsg = replyingTo;
+  const isThread = false;
+
   const typingTimer = useRef(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+
+  React.useEffect(() => {
+    if (replyingTo && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [replyingTo]);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -35,12 +44,20 @@ export default function MessageComposer({ threadParent = null, onSent }) {
     }
   };
 
+  const isTypingRef = useRef(false);
+
   const emitTyping = useCallback(() => {
     if (!activeChannel) return;
     const s = getSocket();
-    s?.emit('typing:start', { channelId: activeChannel._id });
+    
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      s?.emit('typing:start', { channelId: activeChannel._id });
+    }
+
     clearTimeout(typingTimer.current);
     typingTimer.current = setTimeout(() => {
+      isTypingRef.current = false;
       s?.emit('typing:stop', { channelId: activeChannel._id });
     }, 2000);
   }, [activeChannel]);
@@ -117,19 +134,18 @@ export default function MessageComposer({ threadParent = null, onSent }) {
     if ((!content.trim() && !file) || !activeChannel) return;
     
     const tempId = 'temp_' + Date.now();
-    const effectiveParent = threadParent || replyingTo;
     const tempMessage = {
       _id: tempId,
       channel: activeChannel,
       content: content.trim(),
-      intentType: intent,
+      intentType: intent || 'discussion', // Backend still uses discussion by default or expects valid intent type
       priority,
       sender: user,
       createdAt: new Date().toISOString(),
       status: 'sending',
       attachments: file ? [{ name: file.name, size: file.size, type: file.type, url: URL.createObjectURL(file) }] : [],
       localFile: file,
-      threadParent: effectiveParent ? (effectiveParent._id || effectiveParent) : null,
+      threadParent: replyingTo ? (replyingTo._id || replyingTo) : (activeThread ? (activeThread._id || activeThread) : null),
       replyCount: 0
     };
     
@@ -139,60 +155,76 @@ export default function MessageComposer({ threadParent = null, onSent }) {
     setFile(null);
     setUploadProgress(0);
     setMentionState({ show: false, query: '', startIndex: -1 });
+    setPriority('normal');
+    setIntent('');
     if (replyingTo) setReplyingTo(null);
+    // Note: We don't automatically close activeThread on send to let them continue discussing in thread
     onSent?.();
     const s = getSocket();
+    clearTimeout(typingTimer.current);
+    isTypingRef.current = false;
     s?.emit('typing:stop', { channelId: activeChannel._id });
 
     // Let the store handle the API call and updates
     useStore.getState().performSend(tempMessage);
   };
 
-  const cfg = intentConfig[intent];
+  const getReplyPreview = (msg) => {
+    if (!msg) return 'Original message not available';
+    let text = msg.content;
+    if (!text) {
+      if (msg.attachments && msg.attachments.length > 0) text = 'Attachment';
+      else text = 'Message';
+    }
+    if (text.length > 50) text = text.substring(0, 50) + '...';
+    return text;
+  };
+
+  const cfg = intent ? intentConfig[intent] : null;
 
   return (
     <form onSubmit={send} style={styles.form}>
       <div style={styles.toolbar}>
         <div style={styles.intentRow}>
           {INTENTS.map(i => (
-            <button key={i} type="button" onClick={() => setIntent(i)}
+            <button key={i} type="button" onClick={() => setIntent(intent === i ? '' : i)}
               style={{ ...styles.intentBtn, ...(intent === i ? { background: `rgba(${intentBg[i]},0.15)`, borderColor: `rgba(${intentBg[i]},0.4)`, color: intentColor[i] } : {}) }}>
               {intentConfig[i].icon} {intentConfig[i].label}
             </button>
           ))}
         </div>
         <div style={styles.priorityRow}>
-          {PRIORITIES.map(p => (
-            <button key={p} type="button" onClick={() => setPriority(p)}
-              style={{ ...styles.priorityBtn, ...(priority === p ? styles.priorityActive : {}) }}>
-              <span className={`priority-dot priority-${p}`} />
-              {priorityConfig[p].label}
-            </button>
-          ))}
+          <button 
+            type="button" 
+            onClick={() => setPriority(priority === 'urgent' ? 'normal' : 'urgent')}
+            style={{ ...styles.priorityBtn, ...(priority === 'urgent' ? styles.priorityActive : {}) }}
+          >
+            <span className={`priority-dot priority-urgent`} />
+            Urgent
+          </button>
         </div>
       </div>
 
-      <div style={styles.intentIndicator}>
-        <span style={{ color: intentColor[intent], fontSize: 13 }}>{cfg.icon} {cfg.label}</span>
-        {intent === 'action'   && <span style={styles.hint}>→ Will auto-create a task</span>}
-        {intent === 'decision' && <span style={styles.hint}>→ Will be logged to Decision Log</span>}
-        {intent === 'announcement' && <span style={styles.hint}>→ All members will be notified</span>}
-        {threadParent && <span style={styles.hint}>Replying in thread</span>}
-      </div>
+      {intent && (
+        <div style={styles.intentIndicator}>
+          {intent && <span style={{ color: intentColor[intent], fontSize: 13 }}>{cfg.icon} {cfg.label}</span>}
+          {intent === 'action'   && <span style={styles.hint}>→ Will auto-create a task</span>}
+          {intent === 'decision' && <span style={styles.hint}>→ Will be logged to Decision Log</span>}
+          {intent === 'announcement' && <span style={styles.hint}>→ All members will be notified</span>}
+        </div>
+      )}
 
-      {replyingTo && !threadParent && (
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          padding: '8px 12px', background: 'var(--bg-elevated)', borderLeft: '3px solid var(--accent)',
-          borderTopRightRadius: 8, borderTopLeftRadius: 8, marginBottom: 2, fontSize: 12
-        }}>
-          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <span style={{ fontWeight: 600, color: 'var(--accent)', marginRight: 6 }}>Replying to {replyingTo.sender?.name}:</span>
-            <span style={{ color: 'var(--text-secondary)' }}>
-              {replyingTo.content ? (replyingTo.content.length > 60 ? replyingTo.content.substring(0,60)+'...' : replyingTo.content) : (replyingTo.attachments?.length > 0 ? '📎 Attachment' : '')}
-            </span>
+      {replyingTo && (
+        <div style={styles.replyPreviewBox}>
+          <div style={styles.replyPreviewContent}>
+            <div style={styles.replySender}>
+              {replyingTo.sender?._id === user?._id ? 'You' : (replyingTo.sender?.name || 'Unknown')}
+            </div>
+            <div style={styles.replyText}>
+              {getReplyPreview(replyingTo)}
+            </div>
           </div>
-          <button type="button" onClick={() => setReplyingTo(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4, marginLeft: 8 }}>✕</button>
+          <button type="button" onClick={() => setReplyingTo(null)} style={styles.cancelReplyBtn}>✕</button>
         </div>
       )}
 
@@ -230,7 +262,7 @@ export default function MessageComposer({ threadParent = null, onSent }) {
             <textarea
               ref={textareaRef}
               style={styles.textarea}
-              placeholder={`Write a ${intent}… (type @ to mention members)`}
+              placeholder={`Write a ${intent || 'message'}… (type @ to mention members)`}
               value={content}
               onChange={handleTextChange}
               onKeyDown={handleKeyDown}
@@ -318,5 +350,23 @@ const styles = {
   },
   removeFileBtn: {
     background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, padding: 0
+  },
+  replyPreviewBox: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    background: 'var(--bg-base)', border: '1px solid var(--border)', borderLeft: '3px solid var(--accent)',
+    padding: '6px 10px', borderRadius: '4px 8px 8px 4px', marginBottom: 8
+  },
+  replyPreviewContent: {
+    display: 'flex', flexDirection: 'column', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', flex: 1
+  },
+  replySender: {
+    fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 2
+  },
+  replyText: {
+    fontSize: 12, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis'
+  },
+  cancelReplyBtn: {
+    background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+    fontSize: 14, padding: '4px', marginLeft: 8, display: 'flex', alignItems: 'center', justifyContent: 'center'
   }
 };

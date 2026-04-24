@@ -6,6 +6,7 @@
   --bg-void: #f8fafc;
   --bg-base: #ffffff;
   --bg-surface: #f1f5f9;
+  --bg-surface-rgb: 241, 245, 249;
   --bg-elevated: #e2e8f0;
   --bg-hover: #cbd5e1;
   --bg-active: #94a3b8;
@@ -58,6 +59,7 @@ html.theme-dark {
   --bg-void: #080a0f;
   --bg-base: #0d1117;
   --bg-surface: #111820;
+  --bg-surface-rgb: 17, 24, 32;
   --bg-elevated: #161e28;
   --bg-hover: #1c2535;
   --bg-active: #1f2d40;

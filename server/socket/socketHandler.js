@@ -62,12 +62,35 @@ function initSocket(io) {
 
     socket.on('typing:start', ({ channelId }) => {
       socket.to(`channel:${channelId}`).emit('typing:start', {
-        userId, userName: socket.user.name
+        userId, userName: socket.user.name, channelId
       });
     });
 
     socket.on('typing:stop', ({ channelId }) => {
-      socket.to(`channel:${channelId}`).emit('typing:stop', { userId });
+      socket.to(`channel:${channelId}`).emit('typing:stop', { userId, channelId });
+    });
+
+    socket.on('messageUpdated', async (data) => {
+      const { messageId, channelId, updates } = data;
+      if (!messageId || !channelId || !updates) return;
+      try {
+        const Message = require('../models/Message');
+        const Channel = require('../models/Channel');
+        
+        const msg = await Message.findById(messageId);
+        if (!msg) return;
+        
+        const channel = await Channel.findById(channelId);
+        if (!channel) return;
+        
+        const isAdmin = channel.admins.some(a => a.toString() === userId);
+        const isSender = msg.sender.toString() === userId;
+        
+        if (!isAdmin && !isSender) return;
+        
+        await Message.findByIdAndUpdate(messageId, { $set: updates });
+        io.to(`channel:${channelId}`).emit('messageUpdated', data);
+      } catch (err) {}
     });
 
     socket.on('disconnect', async () => {

@@ -11,7 +11,7 @@ import DecisionsPanel from '../components/decisions/DecisionsPanel';
 import MembersPanel from '../components/layout/MembersPanel';
 
 export default function WorkspacePage() {
-  const { token, user, setUser, fetchChannels, fetchTasks, fetchDecisions, fetchUsers, rightPanel, activeThread, toast, channels, setActiveChannel, setToast } = useStore();
+  const { token, user, setUser, fetchChannels, fetchTasks, fetchDecisions, fetchUsers, rightPanel, activeThread, toast, channels, activeChannel, setActiveChannel, setToast } = useStore();
   const [socket, setSocket] = useState(null);
 
   useSocket(socket);
@@ -50,16 +50,16 @@ export default function WorkspacePage() {
         </div>
       </div>
 
-      {rightPanel === 'tasks'     && <TasksPanel />}
-      {rightPanel === 'decisions' && <DecisionsPanel />}
-      {rightPanel === 'members'   && <MembersPanel />}
+      {activeChannel && rightPanel === 'tasks'     && <TasksPanel />}
+      {activeChannel && rightPanel === 'decisions' && <DecisionsPanel />}
+      {activeChannel && rightPanel === 'members'   && <MembersPanel />}
 
       {/* Toast Notification */}
       {toast && (
         <div style={{...styles.toast, cursor: toast.channelId ? 'pointer' : 'default'}} onClick={() => {
           if (toast.channelId) {
             const ch = channels.find(c => c._id === toast.channelId);
-            if (ch) setActiveChannel(ch);
+            if (ch) useStore.getState().selectChannel(ch);
             setTimeout(() => {
               const el = document.getElementById(`msg-${toast.messageId}`);
               if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });

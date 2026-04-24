@@ -6,13 +6,35 @@ import MessageComposer from './MessageComposer';
 export default function ChatArea() {
   const { activeChannel, messages, typing } = useStore();
   const bottomRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const [isAtBottom, setIsAtBottom] = React.useState(true);
+  const [showNewMessageBtn, setShowNewMessageBtn] = React.useState(false);
 
   const channelMessages = activeChannel ? (messages[activeChannel._id] || []) : [];
   const typingUsers = activeChannel ? Object.values(typing[activeChannel._id] || {}) : [];
 
+  const handleScroll = () => {
+    if (!messagesContainerRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
+    const atBottom = scrollHeight - scrollTop - clientHeight < 50;
+    setIsAtBottom(atBottom);
+    if (atBottom) {
+      setShowNewMessageBtn(false);
+    }
+  };
+
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isAtBottom) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      setShowNewMessageBtn(true);
+    }
   }, [channelMessages.length]);
+
+  const scrollToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setShowNewMessageBtn(false);
+  };
 
   if (!activeChannel) {
     return (
@@ -37,9 +59,20 @@ export default function ChatArea() {
     );
   }
 
+  let typingText = '';
+  if (typingUsers.length === 1) typingText = `${typingUsers[0]} is typing…`;
+  else if (typingUsers.length >= 2) typingText = `${typingUsers.length} people are typing…`;
+
   return (
     <div style={styles.area}>
-      <div style={styles.messages}>
+      {/* Typing indicator at top */}
+      {typingUsers.length > 0 && (
+        <div style={styles.typingTop}>
+          <span style={styles.typingText}>{typingText}</span>
+        </div>
+      )}
+
+      <div style={styles.messages} ref={messagesContainerRef} onScroll={handleScroll}>
         {channelMessages.length === 0 && (
           <div style={styles.noMessages}>
             No messages yet in <strong>#{activeChannel.name}</strong>. Start the conversation.
@@ -48,24 +81,23 @@ export default function ChatArea() {
         {channelMessages.map(msg => (
           <MessageBubble key={msg._id} message={msg} />
         ))}
-        {typingUsers.length > 0 && (
-          <div style={styles.typing}>
-            <span style={styles.typingDots}><span /><span /><span /></span>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-              {typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing…
-            </span>
-          </div>
-        )}
         <div ref={bottomRef} />
       </div>
+
+      {showNewMessageBtn && (
+        <button onClick={scrollToBottom} style={styles.newMessageBtn}>
+          <span style={{ fontSize: 14 }}>↓</span> New messages
+        </button>
+      )}
+
       <MessageComposer />
     </div>
   );
 }
 
 const styles = {
-  area: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-surface)' },
-  messages: { flex: 1, overflowY: 'auto', padding: '16px 0' },
+  area: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-surface)', position: 'relative' },
+  messages: { flex: 1, overflowY: 'auto', padding: '16px 0', scrollBehavior: 'smooth' },
   empty: {
     flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
     justifyContent: 'center', background: 'var(--bg-surface)', padding: 40, gap: 16
@@ -84,8 +116,19 @@ const styles = {
     borderRadius: 10, color: 'var(--text-primary)'
   },
   noMessages: { textAlign: 'center', color: 'var(--text-muted)', padding: '40px 20px', fontSize: 14 },
-  typing: { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 20px' },
-  typingDots: {
-    display: 'flex', gap: 3, alignItems: 'center',
+  typingTop: { 
+    position: 'absolute', top: 0, left: 0, right: 0, 
+    background: 'rgba(var(--bg-surface-rgb), 0.85)', backdropFilter: 'blur(4px)',
+    padding: '6px 20px', zIndex: 10, borderBottom: '1px solid var(--border)',
+    animation: 'slideDown 0.2s ease-out'
+  },
+  typingText: { fontSize: 12, color: 'var(--accent)', fontWeight: 600 },
+  newMessageBtn: {
+    position: 'absolute', bottom: 130, left: '50%', transform: 'translateX(-50%)',
+    background: 'var(--bg-elevated)', color: 'var(--text-primary)', border: '1px solid var(--border)', 
+    borderRadius: '24px', padding: '6px 16px', fontSize: 12, fontWeight: 600,
+    cursor: 'pointer', boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
+    zIndex: 20, animation: 'slideUp 0.2s ease',
+    display: 'flex', alignItems: 'center', gap: 6
   }
 };

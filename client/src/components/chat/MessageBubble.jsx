@@ -48,7 +48,8 @@ export default function MessageBubble({ message, onReply }) {
   const intent = intentConfig[message.intentType] || intentConfig.discussion;
   const isOwn = message.sender?._id === user?._id;
   const currentChannel = channels.find(c => c._id === (message.channel?._id || message.channel));
-  const isAdmin = currentChannel?.admins.includes(user?._id);
+  const isAdmin = currentChannel?.admins?.includes(user?._id);
+  const canEditPriority = isOwn || isAdmin;
 
   const parentMessage = message.threadParent 
     ? (typeof message.threadParent === 'object' 
@@ -66,12 +67,41 @@ export default function MessageBubble({ message, onReply }) {
     } catch {}
   };
 
+  const [isHovered, setIsHovered] = useState(false);
+  const isUrgent = message.priority === 'urgent';
+  
+  const handleUpdatePriority = async (newPriority) => {
+    const updated = { ...message, priority: newPriority };
+    updateMessage(updated);
+    setShowDropdown(false);
+    try {
+      const socket = (await import('../../utils/socket')).getSocket();
+      socket?.emit('messageUpdated', {
+        messageId: message._id,
+        channelId: message.channel?._id || message.channel,
+        updates: { priority: newPriority }
+      });
+    } catch {}
+  };
+
+  const urgentBubbleStyle = isUrgent ? {
+    background: 'rgba(239, 68, 68, 0.15)'
+  } : {};
+
+  const hasIntentTag = message.intentType && message.intentType !== 'discussion';
+
   return (
-    <div id={`msg-${message._id}`} style={{
-      ...styles.row,
-      justifyContent: isOwn ? 'flex-end' : 'flex-start',
-      animation: 'fadeIn 0.2s ease both'
-    }} className="animate-fade">
+    <div 
+      id={`msg-${message._id}`} 
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      style={{
+        ...styles.row,
+        justifyContent: isOwn ? 'flex-end' : 'flex-start',
+        animation: 'fadeIn 0.2s ease both'
+      }} 
+      className="animate-fade"
+    >
       {/* Avatar — only for others */}
       {!isOwn && (
         <div style={styles.avatarWrap}>
@@ -85,18 +115,24 @@ export default function MessageBubble({ message, onReply }) {
         ...(isOwn ? styles.bubbleOwn : styles.bubbleOther),
         borderTopRightRadius: isOwn ? 4 : 16,
         borderTopLeftRadius: isOwn ? 16 : 4,
+        ...urgentBubbleStyle
       }}>
         {/* Sender name — only for others */}
         {!isOwn && (
           <div style={styles.senderName}>{message.sender?.name || 'Unknown'}</div>
         )}
 
-        <div style={styles.meta}>
-          <span className={`intent-badge intent-${message.intentType}`}>
-            {intent.icon} {intent.label}
-          </span>
-          {message.isResolved && <span style={styles.resolved}>✓ Resolved</span>}
-        </div>
+        {/* Meta row for intent/resolved badges (only render if there's something to show) */}
+        {(hasIntentTag || message.isResolved) && (
+          <div style={styles.meta}>
+            {hasIntentTag && intent && intent.icon && intent.label && (
+              <span className={`intent-badge intent-${message.intentType}`}>
+                {intent.icon} {intent.label}
+              </span>
+            )}
+            {message.isResolved && <span style={styles.resolved}>✓ Resolved</span>}
+          </div>
+        )}
 
         {parentMessage && (
           <div 
@@ -114,7 +150,7 @@ export default function MessageBubble({ message, onReply }) {
             title="Click to view original message"
           >
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', marginBottom: 2 }}>
-              {parentMessage.sender?.name || 'Unknown'}
+              {parentMessage.sender?._id === user?._id ? 'You' : (parentMessage.sender?.name || 'Unknown')}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
               {parentMessage.content 
@@ -168,47 +204,15 @@ export default function MessageBubble({ message, onReply }) {
           </div>
         )}
 
-        {/* Actions row */}
-        <div style={{ ...styles.actions, justifyContent: isOwn ? 'flex-end' : 'flex-start' }}>
-          {message.replyCount > 0 && (
+        {/* Thread replies (if any) */}
+        {message.replyCount > 0 && (
+          <div style={{ ...styles.actions, justifyContent: isOwn ? 'flex-end' : 'flex-start' }}>
             <button onClick={() => setActiveThread(message)} style={styles.threadBtn}>
               💬 {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
             </button>
-          )}
-          
-          <div>
-            <button ref={triggerRef} onClick={toggleDropdown} style={styles.actionBtn} title="More actions">
-              ⋮
-            </button>
-            
-            {showDropdown && createPortal(
-              <div ref={dropdownRef} style={{ ...styles.dropdownMenu, top: dropdownPos.top, bottom: dropdownPos.bottom, left: dropdownPos.left, right: dropdownPos.right }}>
-                <button className="dropdown-item" onClick={() => { setReplyingTo(message); setShowDropdown(false); }} style={styles.dropdownItem}>Reply</button>
-                
-                {!message.isResolved && message.intentType === 'discussion' && !isOwn && (
-                  <button className="dropdown-item" onClick={() => { setShowVerdict(v => !v); setShowDropdown(false); }} style={styles.dropdownItem}>Resolve</button>
-                )}
-                {!message.isResolved && ['decision','action'].includes(message.intentType) && (
-                  <button className="dropdown-item" onClick={() => { setShowVerdict(v => !v); setShowDropdown(false); }} style={styles.dropdownItem}>Close</button>
-                )}
-                
-                <button className="dropdown-item"
-                  onClick={() => { hideMessage(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
-                  style={styles.dropdownItem}
-                >Delete for me</button>
-                
-                {isAdmin && !message.isTemp && (
-                  <button className="dropdown-item"
-                    onClick={() => { deleteMessageForEveryone(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
-                    style={{ ...styles.dropdownItem, color: '#ef4444' }}
-                  >Delete for everyone</button>
-                )}
-              </div>,
-              document.body
-            )}
           </div>
-        </div>
-        
+        )}
+
         {message.status === 'sending' && (
           <div style={{ marginTop: 6 }}>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
@@ -243,9 +247,53 @@ export default function MessageBubble({ message, onReply }) {
           </div>
         )}
 
-        {/* Timestamp — bottom-right like WhatsApp */}
-        <div style={{ ...styles.timeRow, justifyContent: isOwn ? 'flex-end' : 'flex-start' }}>
+        {/* Timestamp and Action Menu — bottom-right like WhatsApp */}
+        <div style={{ ...styles.timeRow, justifyContent: 'flex-end', marginTop: 4 }}>
           <span style={styles.time}>{formatTime(message.createdAt)}</span>
+          
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', marginLeft: 4 }}>
+            <button 
+              ref={triggerRef} 
+              onClick={toggleDropdown} 
+              style={{ ...styles.actionBtn, opacity: (isHovered || showDropdown) ? 1 : 0 }} 
+              title="More actions"
+            >
+              ⋮
+            </button>
+            
+            {showDropdown && createPortal(
+              <div ref={dropdownRef} style={{ ...styles.dropdownMenu, top: dropdownPos.top, bottom: dropdownPos.bottom, left: dropdownPos.left, right: dropdownPos.right }}>
+                <button className="dropdown-item" onClick={() => { setReplyingTo(message); setShowDropdown(false); setActiveThread(null); }} style={styles.dropdownItem}>Reply</button>
+                
+                {canEditPriority && !isUrgent && (
+                  <button className="dropdown-item" onClick={() => handleUpdatePriority('urgent')} style={styles.dropdownItem}>Mark as urgent</button>
+                )}
+                {canEditPriority && isUrgent && (
+                  <button className="dropdown-item" onClick={() => handleUpdatePriority('normal')} style={styles.dropdownItem}>Remove urgent</button>
+                )}
+
+                {!message.isResolved && message.intentType === 'discussion' && !isOwn && (
+                  <button className="dropdown-item" onClick={() => { setShowVerdict(v => !v); setShowDropdown(false); }} style={styles.dropdownItem}>Resolve</button>
+                )}
+                {!message.isResolved && ['decision','action'].includes(message.intentType) && (
+                  <button className="dropdown-item" onClick={() => { setShowVerdict(v => !v); setShowDropdown(false); }} style={styles.dropdownItem}>Close</button>
+                )}
+                
+                <button className="dropdown-item"
+                  onClick={() => { hideMessage(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
+                  style={styles.dropdownItem}
+                >Delete for me</button>
+                
+                {isAdmin && !message.isTemp && (
+                  <button className="dropdown-item"
+                    onClick={() => { deleteMessageForEveryone(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
+                    style={{ ...styles.dropdownItem, color: '#ef4444' }}
+                  >Delete for everyone</button>
+                )}
+              </div>,
+              document.body
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -273,8 +321,8 @@ const styles = {
     border: '1px solid rgba(14,165,233,0.22)',
   },
   bubbleOther: {
-    background: 'var(--bg-elevated)',
-    border: '1px solid var(--border)',
+    background: 'rgba(128, 128, 128, 0.06)',
+    border: '1px solid rgba(128, 128, 128, 0.12)',
   },
   senderName: {
     fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 2

@@ -34,7 +34,7 @@ router.get('/channel/:channelId', auth, async (req, res) => {
     if (!isMember) return res.status(403).json({ error: 'You are not a member of this channel' });
 
     const { page = 1, limit = 50, intent } = req.query;
-    const query = { channel: req.params.channelId, threadParent: null, hiddenBy: { $ne: req.user._id } };
+    const query = { channel: req.params.channelId, hiddenBy: { $ne: req.user._id } };
     if (intent) query.intentType = intent;
     const messages = await Message.find(query)
       .sort({ createdAt: 1 })
@@ -153,16 +153,6 @@ router.patch('/:id/resolve', auth, async (req, res) => {
 router.patch('/:id/read', auth, async (req, res) => {
   try {
     await Message.findByIdAndUpdate(req.params.id, { $addToSet: { readBy: req.user._id } });
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.patch('/channel/:channelId/read', auth, async (req, res) => {
-  try {
-    await Message.updateMany(
-      { channel: req.params.channelId, readBy: { $ne: req.user._id } },
-      { $addToSet: { readBy: req.user._id } }
-    );
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

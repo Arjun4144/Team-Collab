@@ -7,20 +7,26 @@ export const useSocket = (socket) => {
 
     const onNewMessage = (msg) => {
       const state = useStore.getState();
-      const channelId = msg.channel?._id || msg.channel;
+      const channelId = String(msg.channel?._id || msg.channel);
+      const activeChId = state.activeChannel ? String(state.activeChannel._id) : null;
       
-      if (state.activeChannel?._id === channelId) {
-        if (!msg.readBy) msg.readBy = [];
-        if (state.user && !msg.readBy.includes(state.user._id)) {
-          msg.readBy.push(state.user._id);
-          import('../utils/api').then(({ default: api }) => {
-            api.post(`/messages/channel/${channelId}/read`).catch(() => {});
-          });
-        }
+      if (activeChId === channelId) {
+        import('../utils/api').then(({ default: api }) => {
+          api.post(`/messages/channel/${channelId}/read`).catch(() => {});
+        });
       }
       state.addMessage(msg);
     };
     const onResolved   = (msg) => useStore.getState().updateMessage(msg);
+    const onMessageUpdated = (data) => {
+      const state = useStore.getState();
+      const channelId = data.channelId || data.channel;
+      const msgs = state.messages[channelId] || [];
+      const msg = msgs.find(m => m._id === data.messageId);
+      if (msg) {
+        state.updateMessage({ ...msg, ...data.updates });
+      }
+    };
     const onMessageDeleted = (data) => useStore.getState().removeMessage(data.channel, data._id);
     const onTaskUp     = (task) => useStore.getState().updateTask(task);
     const onDecision   = (d)   => useStore.getState().addDecision(d);
@@ -81,6 +87,7 @@ export const useSocket = (socket) => {
     socket.on('connect', onConnect);
     socket.on('message:new',      onNewMessage);
     socket.on('message:resolved', onResolved);
+    socket.on('messageUpdated',   onMessageUpdated);
     socket.on('message:deleted',  onMessageDeleted);
     socket.on('task:updated',     onTaskUp);
     socket.on('decision:new',     onDecision);
@@ -96,6 +103,7 @@ export const useSocket = (socket) => {
       socket.off('connect',          onConnect);
       socket.off('message:new',      onNewMessage);
       socket.off('message:resolved', onResolved);
+      socket.off('messageUpdated',   onMessageUpdated);
       socket.off('message:deleted',  onMessageDeleted);
       socket.off('task:updated',     onTaskUp);
       socket.off('decision:new',     onDecision);

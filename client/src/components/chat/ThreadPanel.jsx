@@ -1,33 +1,41 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import useStore from '../../store/useStore';
-import api from '../../utils/api';
 import MessageBubble from './MessageBubble';
-import MessageComposer from './MessageComposer';
 import { intentConfig, formatTime, getInitials } from '../../utils/helpers';
 
 export default function ThreadPanel() {
-  const { activeThread, setActiveThread } = useStore();
-  const [replies, setReplies] = useState([]);
+  const { activeThread, setActiveThread, messages, activeChannel } = useStore();
 
-  useEffect(() => {
-    if (!activeThread) return;
-    api.get(`/messages/${activeThread._id}/thread`)
-      .then(r => setReplies(r.data))
-      .catch(() => {});
-  }, [activeThread?._id]);
+  if (!activeThread || !activeChannel) return null;
 
-  if (!activeThread) return null;
+  const channelId = activeChannel._id;
+  const channelMessages = messages[channelId] || [];
+  const threadId = activeThread._id;
 
-  const intent = intentConfig[activeThread.intentType] || intentConfig.discussion;
+  // Resolve the parent message live from the store so updates (urgent, etc.) reflect instantly
+  const liveParent = channelMessages.find(m => m._id === threadId) || activeThread;
+
+  // Derive replies from the global store — filter messages whose threadParent matches this thread
+  const replies = channelMessages.filter(m => {
+    const tp = m.threadParent;
+    if (!tp) return false;
+    const parentId = typeof tp === 'object' && tp !== null ? (tp._id || tp) : tp;
+    return String(parentId) === String(threadId);
+  });
+
+  const intent = liveParent.intentType ? intentConfig[liveParent.intentType] : null;
+  const replyCount = liveParent.replyCount || replies.length;
 
   return (
     <div style={styles.panel}>
       <div style={styles.header}>
         <div>
           <div style={styles.title}>Thread</div>
-          <span className={`intent-badge intent-${activeThread.intentType}`}>
-            {intent.icon} {intent.label}
-          </span>
+          {intent && intent.icon && intent.label && (
+            <span className={`intent-badge intent-${liveParent.intentType}`}>
+              {intent.icon} {intent.label}
+            </span>
+          )}
         </div>
         <button onClick={() => setActiveThread(null)} style={styles.close}>✕</button>
       </div>
@@ -35,15 +43,15 @@ export default function ThreadPanel() {
       {/* Parent message */}
       <div style={styles.parent}>
         <div style={styles.parentMeta}>
-          <div style={styles.parentAvatar}>{getInitials(activeThread.sender?.name)}</div>
-          <span style={styles.parentName}>{activeThread.sender?.name}</span>
-          <span style={styles.parentTime}>{formatTime(activeThread.createdAt)}</span>
+          <div style={styles.parentAvatar}>{getInitials(liveParent.sender?.name || 'Unknown')}</div>
+          <span style={styles.parentName}>{liveParent.sender?.name || 'Unknown'}</span>
+          <span style={styles.parentTime}>{liveParent.createdAt ? formatTime(liveParent.createdAt) : ''}</span>
         </div>
-        <div style={styles.parentContent}>{activeThread.content}</div>
+        <div style={styles.parentContent}>{liveParent.content || 'Message'}</div>
       </div>
 
       <div style={styles.divider}>
-        <span style={styles.replyCount}>{activeThread.replyCount} {activeThread.replyCount === 1 ? 'reply' : 'replies'}</span>
+        <span style={styles.replyCount}>{replyCount} {replyCount === 1 ? 'reply' : 'replies'}</span>
       </div>
 
       <div style={styles.replies}>
@@ -52,11 +60,6 @@ export default function ThreadPanel() {
         ))}
       </div>
 
-      <div style={styles.composerWrap}>
-        <MessageComposer threadParent={activeThread} onSent={() => {
-          api.get(`/messages/${activeThread._id}/thread`).then(r => setReplies(r.data));
-        }} />
-      </div>
     </div>
   );
 }
@@ -86,6 +89,5 @@ const styles = {
   parentContent: { fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5, whiteSpace: 'pre-wrap' },
   divider: { padding: '8px 16px', borderBottom: '1px solid var(--border)', flexShrink: 0 },
   replyCount: { fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' },
-  replies: { flex: 1, overflowY: 'auto', padding: '8px 0' },
-  composerWrap: { borderTop: '1px solid var(--border)', flexShrink: 0 }
+  replies: { flex: 1, overflowY: 'auto', padding: '8px 0' }
 };
