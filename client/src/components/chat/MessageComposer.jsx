@@ -8,11 +8,13 @@ const INTENTS  = Object.keys(intentConfig);
 const PRIORITIES = Object.keys(priorityConfig);
 
 export default function MessageComposer({ threadParent = null, onSent }) {
-  const { activeChannel, user, addMessage, users } = useStore();
+  const { activeChannel, user, addMessage, users, replyingTo, setReplyingTo } = useStore();
   const [content, setContent]   = useState('');
   const [intent, setIntent]     = useState('discussion');
   const [priority, setPriority] = useState('normal');
   const [sending, setSending]   = useState(false);
+  const [file, setFile]         = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
   
   // Mention state
   const [mentionState, setMentionState] = useState({ show: false, query: '', startIndex: -1 });
@@ -20,6 +22,18 @@ export default function MessageComposer({ threadParent = null, onSent }) {
 
   const typingTimer = useRef(null);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  const handleFileChange = (e) => {
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      if (selectedFile.size > 10 * 1024 * 1024) {
+        alert('File size exceeds 10MB limit');
+        return;
+      }
+      setFile(selectedFile);
+    }
+  };
 
   const emitTyping = useCallback(() => {
     if (!activeChannel) return;
@@ -100,28 +114,38 @@ export default function MessageComposer({ threadParent = null, onSent }) {
 
   const send = async (e) => {
     e?.preventDefault();
-    if (!content.trim() || !activeChannel) return;
-    setSending(true);
-    try {
-      const { data } = await api.post('/messages', {
-        channel: activeChannel._id,
-        content: content.trim(),
-        intentType: intent,
-        priority,
-        threadParent: threadParent?._id || null
-      });
-      addMessage(data);
-      const s = getSocket();
-      s?.emit('message:send', data);
-      setContent('');
-      setMentionState({ show: false, query: '', startIndex: -1 });
-      onSent?.();
-      s?.emit('typing:stop', { channelId: activeChannel._id });
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSending(false);
-    }
+    if ((!content.trim() && !file) || !activeChannel) return;
+    
+    const tempId = 'temp_' + Date.now();
+    const effectiveParent = threadParent || replyingTo;
+    const tempMessage = {
+      _id: tempId,
+      channel: activeChannel,
+      content: content.trim(),
+      intentType: intent,
+      priority,
+      sender: user,
+      createdAt: new Date().toISOString(),
+      status: 'sending',
+      attachments: file ? [{ name: file.name, size: file.size, type: file.type, url: URL.createObjectURL(file) }] : [],
+      localFile: file,
+      threadParent: effectiveParent ? (effectiveParent._id || effectiveParent) : null,
+      replyCount: 0
+    };
+    
+    useStore.getState().addMessage(tempMessage);
+    
+    setContent('');
+    setFile(null);
+    setUploadProgress(0);
+    setMentionState({ show: false, query: '', startIndex: -1 });
+    if (replyingTo) setReplyingTo(null);
+    onSent?.();
+    const s = getSocket();
+    s?.emit('typing:stop', { channelId: activeChannel._id });
+
+    // Let the store handle the API call and updates
+    useStore.getState().performSend(tempMessage);
   };
 
   const cfg = intentConfig[intent];
@@ -156,6 +180,22 @@ export default function MessageComposer({ threadParent = null, onSent }) {
         {threadParent && <span style={styles.hint}>Replying in thread</span>}
       </div>
 
+      {replyingTo && !threadParent && (
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '8px 12px', background: 'var(--bg-elevated)', borderLeft: '3px solid var(--accent)',
+          borderTopRightRadius: 8, borderTopLeftRadius: 8, marginBottom: 2, fontSize: 12
+        }}>
+          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ fontWeight: 600, color: 'var(--accent)', marginRight: 6 }}>Replying to {replyingTo.sender?.name}:</span>
+            <span style={{ color: 'var(--text-secondary)' }}>
+              {replyingTo.content ? (replyingTo.content.length > 60 ? replyingTo.content.substring(0,60)+'...' : replyingTo.content) : (replyingTo.attachments?.length > 0 ? '📎 Attachment' : '')}
+            </span>
+          </div>
+          <button type="button" onClick={() => setReplyingTo(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4, marginLeft: 8 }}>✕</button>
+        </div>
+      )}
+
       <div style={{ position: 'relative' }}>
         {mentionState.show && mentionSuggestions.length > 0 && (
           <ul style={styles.mentionList}>
@@ -177,17 +217,28 @@ export default function MessageComposer({ threadParent = null, onSent }) {
         )}
         
         <div style={styles.inputRow}>
-          <textarea
-            ref={textareaRef}
-            style={styles.textarea}
-            placeholder={`Write a ${intent}… (type @ to mention members)`}
-            value={content}
-            onChange={handleTextChange}
-            onKeyDown={handleKeyDown}
-            rows={3}
-          />
-          <button type="submit" disabled={!content.trim() || sending} style={styles.sendBtn}>
-            {sending ? '…' : '↑'}
+          <button type="button" onClick={() => fileInputRef.current?.click()} style={styles.attachBtn} title="Attach file">📎</button>
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} accept="image/*,.pdf,.doc,.docx,.txt" />
+          
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {file && (
+              <div style={styles.filePreviewContainer}>
+                <span style={{ fontSize: 12, fontWeight: 500 }}>{file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                <button type="button" onClick={() => setFile(null)} style={styles.removeFileBtn}>✕</button>
+              </div>
+            )}
+            <textarea
+              ref={textareaRef}
+              style={styles.textarea}
+              placeholder={`Write a ${intent}… (type @ to mention members)`}
+              value={content}
+              onChange={handleTextChange}
+              onKeyDown={handleKeyDown}
+              rows={3}
+            />
+          </div>
+          <button type="submit" disabled={(!content.trim() && !file) || sending} style={styles.sendBtn}>
+            ↑
           </button>
         </div>
       </div>
@@ -255,5 +306,17 @@ const styles = {
     display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700
   },
   mentionName: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' },
-  mentionRole: { fontSize: 11, color: 'var(--text-muted)' }
+  mentionRole: { fontSize: 11, color: 'var(--text-muted)' },
+  attachBtn: {
+    width: 36, height: 36, borderRadius: '50%', background: 'var(--bg-elevated)', color: 'var(--text-secondary)',
+    border: '1px solid var(--border)', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center',
+    justifyContent: 'center', flexShrink: 0, marginBottom: 4, transition: 'all 0.15s'
+  },
+  filePreviewContainer: {
+    display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', background: 'var(--bg-elevated)',
+    borderRadius: 8, border: '1px solid var(--border)', width: 'fit-content'
+  },
+  removeFileBtn: {
+    background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 12, padding: 0
+  }
 };

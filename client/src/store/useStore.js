@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import api from '../utils/api';
+import axios from 'axios';
 
 const useStore = create((set, get) => ({
   // Auth
@@ -27,6 +28,18 @@ const useStore = create((set, get) => ({
   setMessages: (channelId, msgs) => set(s => ({
     messages: { ...s.messages, [channelId]: msgs }
   })),
+  markChannelRead: (channelId) => set(s => {
+    const userId = s.user?._id;
+    if (!userId || !s.messages[channelId]) return s;
+    return {
+      messages: {
+        ...s.messages,
+        [channelId]: s.messages[channelId].map(m => 
+          m.readBy?.includes(userId) ? m : { ...m, readBy: [...(m.readBy || []), userId] }
+        )
+      }
+    };
+  }),
   addMessage: (msg) => {
     const channelId = msg.channel?._id || msg.channel;
     set(s => ({
@@ -46,6 +59,119 @@ const useStore = create((set, get) => ({
         )
       }
     }));
+  },
+  hideMessage: async (channelId, messageId) => {
+    try {
+      await api.delete(`/messages/${messageId}/hide`);
+      set(s => ({
+        messages: {
+          ...s.messages,
+          [channelId]: (s.messages[channelId] || []).filter(m => m._id !== messageId)
+        }
+      }));
+    } catch {}
+  },
+  removeMessage: (channelId, messageId) => set(s => ({
+    messages: {
+      ...s.messages,
+      [channelId]: (s.messages[channelId] || []).filter(m => m._id !== messageId)
+    }
+  })),
+  deleteMessageForEveryone: async (channelId, messageId) => {
+    try {
+      await api.delete(`/messages/${messageId}/everyone`);
+    } catch {}
+  },
+  performSend: async (tempMessage) => {
+    const channelId = tempMessage.channel._id || tempMessage.channel;
+    try {
+      let data;
+      if (tempMessage.localFile) {
+        const formData = new FormData();
+        formData.append('file', tempMessage.localFile);
+        
+        const uploadRes = await axios.post(`${api.defaults.baseURL}/messages/channel/${channelId}/upload`, formData, {
+          headers: { 
+            Authorization: `Bearer ${localStorage.getItem('nexus_token')}`
+          },
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            set(s => ({
+              messages: {
+                ...s.messages,
+                [channelId]: (s.messages[channelId] || []).map(m => 
+                  m._id === tempMessage._id ? { ...m, uploadProgress: percentCompleted } : m
+                )
+              }
+            }));
+          }
+        });
+        
+        const fileData = uploadRes.data;
+
+        const msgRes = await api.post('/messages', {
+          channel: channelId,
+          content: tempMessage.content || '',
+          intentType: tempMessage.intentType,
+          priority: tempMessage.priority,
+          threadParent: tempMessage.threadParent?._id || tempMessage.threadParent || null,
+          attachments: [{
+            name: fileData.filename,
+            url: fileData.fileUrl,
+            type: tempMessage.localFile.type,
+            size: fileData.size
+          }]
+        });
+        
+        data = msgRes.data;
+      } else {
+        const res = await api.post('/messages', {
+          channel: channelId,
+          content: tempMessage.content,
+          intentType: tempMessage.intentType,
+          priority: tempMessage.priority,
+          threadParent: tempMessage.threadParent?._id || tempMessage.threadParent || null
+        });
+        data = res.data;
+      }
+      
+      // Replace temp message with real message
+      set(s => {
+        const msgs = s.messages[channelId] || [];
+        return {
+          messages: {
+            ...s.messages,
+            [channelId]: msgs.map(m => m._id === tempMessage._id ? data : m)
+          }
+        };
+      });
+      
+      import('../utils/socket').then(({ getSocket }) => {
+        const socket = getSocket();
+        socket?.emit('message:send', data);
+      });
+      
+    } catch (err) {
+      console.error('Send failed:', err);
+      // Update status to failed
+      set(s => {
+        const msgs = s.messages[channelId] || [];
+        return {
+          messages: {
+            ...s.messages,
+            [channelId]: msgs.map(m => m._id === tempMessage._id ? { ...m, status: 'failed' } : m)
+          }
+        };
+      });
+    }
+  },
+  clearChannelMessages: async (channelId) => {
+    try {
+      await api.post(`/messages/channel/${channelId}/clear`);
+      set(s => ({
+        messages: { ...s.messages, [channelId]: [] }
+      }));
+    } catch {}
   },
 
   // Tasks
@@ -83,6 +209,8 @@ const useStore = create((set, get) => ({
   setRightPanel: (panel) => set(s => ({ rightPanel: s.rightPanel === panel ? null : panel })),
   activeThread: null,
   setActiveThread: (msg) => set({ activeThread: msg }),
+  replyingTo: null,
+  setReplyingTo: (msg) => set({ replyingTo: msg }),
 
   // Typing
   typing: {},

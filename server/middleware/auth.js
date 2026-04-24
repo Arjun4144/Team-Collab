@@ -5,11 +5,18 @@ const JWT_SECRET = process.env.JWT_SECRET || 'nexus_secret_dev_key';
 
 const auth = async (req, res, next) => {
   try {
+    let token;
     const header = req.headers.authorization;
-    if (!header || !header.startsWith('Bearer ')) {
+    if (header && header.startsWith('Bearer ')) {
+      token = header.split(' ')[1];
+    } else if (req.query.token) {
+      token = req.query.token;
+    }
+    
+    if (!token) {
       return res.status(401).json({ error: 'No token provided' });
     }
-    const token = header.split(' ')[1];
+    
     const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.id).select('-password');
     if (!user) return res.status(401).json({ error: 'User not found' });

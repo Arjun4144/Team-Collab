@@ -16,8 +16,18 @@ router.get('/', auth, async (req, res) => {
     const channels = await Channel.find({
       members: req.user._id,
       isArchived: false
-    }).populate('members', 'name email avatar status').populate('createdBy', 'name');
-    res.json(channels);
+    }).populate('members', 'name email avatar status').populate('createdBy', 'name').lean();
+
+    const channelsWithUnread = await Promise.all(channels.map(async (ch) => {
+      const unreadCount = await Message.countDocuments({
+        channel: ch._id,
+        readBy: { $ne: req.user._id },
+        hiddenBy: { $ne: req.user._id }
+      });
+      return { ...ch, unreadCount };
+    }));
+
+    res.json(channelsWithUnread);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

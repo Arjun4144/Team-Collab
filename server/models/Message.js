@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const messageSchema = new mongoose.Schema({
   channel: { type: mongoose.Schema.Types.ObjectId, ref: 'Channel', required: true },
   sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  content: { type: String, required: true },
+  content: { type: String, default: '' },
   intentType: {
     type: String,
     enum: ['discussion', 'announcement', 'decision', 'action', 'fyi'],
@@ -16,8 +16,17 @@ const messageSchema = new mongoose.Schema({
   isEdited: { type: Boolean, default: false },
   isResolved: { type: Boolean, default: false },
   verdict: { type: String, default: '' },
-  attachments: [{ name: String, url: String, type: String }],
-  reactions: [{ emoji: String, users: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }] }]
+  attachments: {
+    type: [{
+      name: String,
+      url: String,
+      type: { type: String },
+      size: Number
+    }],
+    default: []
+  },
+  reactions: [{ emoji: String, users: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }] }],
+  hiddenBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
 }, { timestamps: true });
 
 messageSchema.index({ channel: 1, createdAt: -1 });

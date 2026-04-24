@@ -27,8 +27,13 @@ function initSocket(io) {
     User.findByIdAndUpdate(userId, { status: 'online' }).catch(() => {});
     io.emit('user:online', { userId, status: 'online' });
 
+    // Auto-join all channels the user is a member of
+    Channel.find({ members: userId, isArchived: false }).then(channels => {
+      channels.forEach(ch => socket.join(`channel:${ch._id}`));
+    }).catch(() => {});
+
     socket.on('channel:join', async (channelId) => {
-      // Verify membership before allowing room join
+      // Keep for explicit joins when creating/joining new channels dynamically
       try {
         const channel = await Channel.findById(channelId);
         if (channel && channel.members.some(m => m.toString() === userId)) {

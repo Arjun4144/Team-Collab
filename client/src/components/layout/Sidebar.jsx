@@ -5,20 +5,36 @@ import { getInitials, statusConfig } from '../../utils/helpers';
 import api from '../../utils/api';
 
 export default function Sidebar() {
-  const { user, channels, activeChannel, setActiveChannel, fetchMessages,
+  const { user, channels, activeChannel, setActiveChannel, fetchMessages, messages,
           setRightPanel, rightPanel, logout, fetchChannels, joinChannelByInvite } = useStore();
   const [showNewChannel, setShowNewChannel] = useState(false);
   const [showJoinChannel, setShowJoinChannel] = useState(false);
   const [newCh, setNewCh] = useState({ name: '', description: '' });
   const [inviteCodeInput, setInviteCodeInput] = useState('');
 
-  const selectChannel = (ch) => {
+  const toggleTheme = () => {
+    const isDark = document.documentElement.classList.contains('theme-dark');
+    if (isDark) {
+      document.documentElement.classList.remove('theme-dark');
+      localStorage.setItem('nexus_theme', 'light');
+    } else {
+      document.documentElement.classList.add('theme-dark');
+      localStorage.setItem('nexus_theme', 'dark');
+    }
+  };
+
+  const selectChannel = async (ch) => {
     if (activeChannel?._id !== ch._id) {
       const socket = getSocket();
       if (activeChannel) socket?.emit('channel:leave', activeChannel._id);
       socket?.emit('channel:join', ch._id);
       setActiveChannel(ch);
       fetchMessages(ch._id);
+      
+      try {
+        useStore.getState().markChannelRead(ch._id);
+        await api.post(`/messages/channel/${ch._id}/read`);
+      } catch {}
     }
   };
 
@@ -104,13 +120,22 @@ export default function Sidebar() {
         )}
 
         <div style={styles.channelList}>
-          {channels.map(ch => (
-            <button key={ch._id} onClick={() => selectChannel(ch)}
-              style={{ ...styles.channelItem, ...(activeChannel?._id === ch._id ? styles.channelActive : {}) }}>
-              <span style={styles.chPrefix}>🔒</span>
-              <span style={styles.chName}>{ch.name}</span>
-            </button>
-          ))}
+          {channels.map(ch => {
+            const chMessages = messages[ch._id] || [];
+            const unreadCount = chMessages.filter(m => !m.readBy?.includes(user?._id)).length;
+            const displayCount = unreadCount > 99 ? '99+' : unreadCount;
+            
+            return (
+              <button key={ch._id} onClick={() => selectChannel(ch)}
+                style={{ ...styles.channelItem, ...(activeChannel?._id === ch._id ? styles.channelActive : {}) }}>
+                <span style={styles.chPrefix}>🔒</span>
+                <span style={styles.chName}>{ch.name}</span>
+                {unreadCount > 0 && (
+                  <span style={styles.unreadBadge}>{displayCount}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -124,6 +149,7 @@ export default function Sidebar() {
           <div style={styles.userName}>{user?.name}</div>
           <div style={styles.userRole}>{user?.role}</div>
         </div>
+        <button onClick={toggleTheme} title="Toggle Theme" style={styles.logoutBtn}>🌓</button>
         <button onClick={logout} title="Sign out" style={styles.logoutBtn}>⎋</button>
       </div>
     </aside>
@@ -175,6 +201,11 @@ const styles = {
     transition: 'all 0.1s', textAlign: 'left'
   },
   channelActive: { background: 'var(--bg-active)', color: 'var(--text-primary)' },
+  unreadBadge: {
+    background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 700,
+    padding: '2px 6px', borderRadius: 10, marginLeft: 'auto', flexShrink: 0,
+    lineHeight: 1
+  },
   chPrefix: { fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 },
   chName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   newChForm: { padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 6 },

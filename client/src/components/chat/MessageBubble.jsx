@@ -1,15 +1,60 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import useStore from '../../store/useStore';
 import api from '../../utils/api';
 import { getInitials, formatTime, intentConfig } from '../../utils/helpers';
 
 export default function MessageBubble({ message, onReply }) {
-  const { user, updateMessage, setActiveThread } = useStore();
+  const { user, updateMessage, setActiveThread, setReplyingTo, hideMessage, channels, deleteMessageForEveryone, messages } = useStore();
   const [showVerdict, setShowVerdict] = useState(false);
   const [verdict, setVerdict] = useState('');
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState({ top: 'auto', bottom: 'auto', left: 'auto', right: 'auto' });
+  const dropdownRef = useRef(null);
+  const triggerRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (
+        dropdownRef.current && !dropdownRef.current.contains(event.target) &&
+        triggerRef.current && !triggerRef.current.contains(event.target)
+      ) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleDropdown = () => {
+    if (showDropdown) {
+      setShowDropdown(false);
+      return;
+    }
+    const rect = triggerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const dropdownHeight = 200; // safe estimate
+    const isAbove = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+    
+    setDropdownPos({
+      top: isAbove ? 'auto' : rect.bottom + 8,
+      bottom: isAbove ? window.innerHeight - rect.top + 8 : 'auto',
+      left: isOwn ? 'auto' : rect.left,
+      right: isOwn ? window.innerWidth - rect.right : 'auto'
+    });
+    setShowDropdown(true);
+  };
 
   const intent = intentConfig[message.intentType] || intentConfig.discussion;
   const isOwn = message.sender?._id === user?._id;
+  const currentChannel = channels.find(c => c._id === (message.channel?._id || message.channel));
+  const isAdmin = currentChannel?.admins.includes(user?._id);
+
+  const parentMessage = message.threadParent 
+    ? (typeof message.threadParent === 'object' 
+        ? message.threadParent 
+        : messages[currentChannel?._id]?.find(m => m._id === message.threadParent))
+    : null;
 
   const resolve = async () => {
     try {
@@ -53,18 +98,73 @@ export default function MessageBubble({ message, onReply }) {
           {message.isResolved && <span style={styles.resolved}>✓ Resolved</span>}
         </div>
 
+        {parentMessage && (
+          <div 
+            onClick={() => {
+              const el = document.getElementById(`msg-${parentMessage._id || parentMessage}`);
+              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }}
+            style={{
+              borderLeft: '3px solid var(--accent)',
+              paddingLeft: '8px',
+              marginBottom: '6px',
+              cursor: 'pointer',
+              opacity: 0.85
+            }}
+            title="Click to view original message"
+          >
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', marginBottom: 2 }}>
+              {parentMessage.sender?.name || 'Unknown'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+              {parentMessage.content 
+                ? (parentMessage.content.length > 50 ? parentMessage.content.substring(0, 50) + '...' : parentMessage.content) 
+                : (parentMessage.attachments?.length > 0 ? '📎 Attachment' : '...')}
+            </div>
+          </div>
+        )}
+
         <div style={styles.content}>
-          {message.content.split(/(@\w+)/g).map((part, i) => 
+          {message.content ? message.content.split(/(@\w+)/g).map((part, i) => 
             part.startsWith('@') ? (
               <span key={i} style={styles.mention}>{part}</span>
             ) : part
-          )}
+          ) : null}
         </div>
 
         {message.verdict && (
           <div style={styles.verdictBox}>
             <span style={styles.verdictLabel}>Verdict</span>
             <span style={styles.verdictText}>{message.verdict}</span>
+          </div>
+        )}
+
+        {message.attachments && message.attachments.length > 0 && (
+          <div style={styles.attachments}>
+            {message.attachments.map((att, i) => {
+              const isImage = att.type.startsWith('image/');
+              const actualUrl = att.url.startsWith('/uploads/') ? att.url : `/uploads/${att.url}`;
+              const backendUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+              const fileUrl = `${backendUrl}${actualUrl}`;
+              return (
+                <div key={i} style={styles.attachment}>
+                  {isImage ? (
+                    <a href={fileUrl} target="_blank" rel="noreferrer">
+                      <img src={fileUrl} alt={att.name} style={styles.imagePreview} />
+                    </a>
+                  ) : (
+                    <div style={styles.fileCard}>
+                      <span style={styles.fileIcon}>📄</span>
+                      <div style={styles.fileInfo}>
+                        <div style={styles.fileName}>{att.name}</div>
+                        <div style={styles.fileSize}>{att.size ? (att.size / 1024 / 1024).toFixed(2) + ' MB' : ''}</div>
+                      </div>
+                      <a href={fileUrl} target="_blank" rel="noreferrer" style={styles.downloadBtn}>Download</a>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -75,14 +175,65 @@ export default function MessageBubble({ message, onReply }) {
               💬 {message.replyCount} {message.replyCount === 1 ? 'reply' : 'replies'}
             </button>
           )}
-          <button onClick={() => setActiveThread(message)} style={styles.actionBtn}>Reply</button>
-          {!message.isResolved && message.intentType === 'discussion' && !isOwn && (
-            <button onClick={() => setShowVerdict(v => !v)} style={styles.actionBtn}>Resolve</button>
-          )}
-          {!message.isResolved && ['decision','action'].includes(message.intentType) && (
-            <button onClick={() => setShowVerdict(v => !v)} style={styles.actionBtn}>Close</button>
-          )}
+          
+          <div>
+            <button ref={triggerRef} onClick={toggleDropdown} style={styles.actionBtn} title="More actions">
+              ⋮
+            </button>
+            
+            {showDropdown && createPortal(
+              <div ref={dropdownRef} style={{ ...styles.dropdownMenu, top: dropdownPos.top, bottom: dropdownPos.bottom, left: dropdownPos.left, right: dropdownPos.right }}>
+                <button className="dropdown-item" onClick={() => { setReplyingTo(message); setShowDropdown(false); }} style={styles.dropdownItem}>Reply</button>
+                
+                {!message.isResolved && message.intentType === 'discussion' && !isOwn && (
+                  <button className="dropdown-item" onClick={() => { setShowVerdict(v => !v); setShowDropdown(false); }} style={styles.dropdownItem}>Resolve</button>
+                )}
+                {!message.isResolved && ['decision','action'].includes(message.intentType) && (
+                  <button className="dropdown-item" onClick={() => { setShowVerdict(v => !v); setShowDropdown(false); }} style={styles.dropdownItem}>Close</button>
+                )}
+                
+                <button className="dropdown-item"
+                  onClick={() => { hideMessage(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
+                  style={styles.dropdownItem}
+                >Delete for me</button>
+                
+                {isAdmin && !message.isTemp && (
+                  <button className="dropdown-item"
+                    onClick={() => { deleteMessageForEveryone(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
+                    style={{ ...styles.dropdownItem, color: '#ef4444' }}
+                  >Delete for everyone</button>
+                )}
+              </div>,
+              document.body
+            )}
+          </div>
         </div>
+        
+        {message.status === 'sending' && (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>
+              {message.localFile ? `Uploading... ${message.uploadProgress || 0}%` : 'Sending...'}
+            </div>
+            {message.localFile && (
+              <div style={{ width: '100%', height: 4, background: 'var(--bg-void)', borderRadius: 2, overflow: 'hidden' }}>
+                <div style={{ width: `${message.uploadProgress || 0}%`, height: '100%', background: 'var(--accent)', transition: 'width 0.1s linear' }} />
+              </div>
+            )}
+          </div>
+        )}
+        {message.status === 'failed' && (
+          <div style={{ 
+            fontSize: 11, color: '#ef4444', marginTop: 8, padding: '6px 10px', 
+            background: 'rgba(239, 68, 68, 0.1)', borderRadius: 6, 
+            display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between'
+          }}>
+            <span style={{ fontWeight: 600 }}>Failed to send</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={() => useStore.getState().performSend(message)} style={styles.retryBtn}>Retry</button>
+              <button onClick={() => useStore.getState().removeMessage(message.channel?._id || message.channel, message._id)} style={styles.cancelBtn}>Cancel</button>
+            </div>
+          </div>
+        )}
 
         {showVerdict && (
           <div style={styles.verdictForm}>
@@ -161,6 +312,17 @@ const styles = {
     padding: '3px 10px', borderRadius: 5, fontSize: 11, color: 'var(--accent)',
     background: 'var(--accent-glow)', border: 'none', cursor: 'pointer', fontWeight: 500
   },
+  dropdownMenu: {
+    position: 'fixed',
+    background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+    borderRadius: 8, padding: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
+    zIndex: 9999, display: 'flex', flexDirection: 'column', minWidth: 150
+  },
+  dropdownItem: {
+    padding: '8px 12px', textAlign: 'left', background: 'none', border: 'none',
+    color: 'var(--text-primary)', fontSize: 13, cursor: 'pointer', borderRadius: 4,
+    width: '100%', transition: 'background 0.1s'
+  },
   verdictForm: { display: 'flex', gap: 8, marginTop: 8 },
   verdictInput: {
     flex: 1, background: 'var(--bg-base)', border: '1px solid var(--border)',
@@ -170,5 +332,16 @@ const styles = {
     padding: '6px 14px', background: 'rgba(16,185,129,0.15)', color: '#34d399',
     border: '1px solid rgba(16,185,129,0.3)', borderRadius: 6, fontSize: 12,
     fontWeight: 600, cursor: 'pointer'
-  }
+  },
+  attachments: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 },
+  attachment: { overflow: 'hidden', borderRadius: 8, border: '1px solid var(--border)' },
+  imagePreview: { maxWidth: '100%', maxHeight: 250, display: 'block', objectFit: 'contain', background: 'var(--bg-void)' },
+  fileCard: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--bg-base)' },
+  fileIcon: { fontSize: 24 },
+  fileInfo: { flex: 1, minWidth: 0 },
+  fileName: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  fileSize: { fontSize: 11, color: 'var(--text-muted)' },
+  downloadBtn: { fontSize: 12, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600, padding: '4px 8px', background: 'var(--accent-glow)', borderRadius: 4 },
+  retryBtn: { background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: 4, padding: '2px 8px', fontSize: 10, cursor: 'pointer' },
+  cancelBtn: { background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', borderRadius: 4, padding: '2px 8px', fontSize: 10, cursor: 'pointer' }
 };

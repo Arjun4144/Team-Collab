@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../../store/useStore';
 
 export default function ChannelHeader() {
-  const { activeChannel, setRightPanel, rightPanel, users, user, generateInviteLink, deleteChannel, renameChannel, showToast } = useStore();
+  const { activeChannel, setRightPanel, rightPanel, users, user, generateInviteLink, deleteChannel, renameChannel, showToast, clearChannelMessages } = useStore();
   const [showMenu, setShowMenu] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameInput, setRenameInput] = useState('');
@@ -79,6 +79,15 @@ export default function ChannelHeader() {
     }
   };
 
+  const handleClearChat = async () => {
+    try {
+      await clearChannelMessages(activeChannel._id);
+      showToast('Chat cleared for you');
+    } catch (err) {
+      showToast('Failed to clear chat.');
+    }
+  };
+
   return (
     <header style={styles.header}>
       <div style={styles.left}>
@@ -105,18 +114,21 @@ export default function ChannelHeader() {
         ) : (
           <>
             <span style={styles.name}>{activeChannel.name}</span>
-            {isAdmin && (
-              <div style={{ position: 'relative' }} ref={menuRef}>
-                <button onClick={() => setShowMenu(m => !m)} style={styles.menuDotsBtn}>...</button>
-                {showMenu && (
-                  <div style={styles.dropdown}>
-                    <button onClick={() => { setShowMenu(false); handleInvite(); }} style={styles.dropdownBtn}>📋 Invite Link</button>
-                    <button onClick={() => { setShowMenu(false); setRenameInput(activeChannel.name); setIsRenaming(true); }} style={styles.dropdownBtn}>✏️ Rename Channel</button>
-                    <button onClick={() => { setShowMenu(false); setShowDeleteModal(true); }} style={{ ...styles.dropdownBtn, color: '#ef4444' }}>🗑️ Delete Channel</button>
-                  </div>
-                )}
-              </div>
-            )}
+            <div style={{ position: 'relative' }} ref={menuRef}>
+              <button onClick={() => setShowMenu(m => !m)} style={styles.menuDotsBtn}>...</button>
+              {showMenu && (
+                <div style={styles.dropdown}>
+                  <button onClick={() => { setShowMenu(false); handleClearChat(); }} style={styles.dropdownBtn}>🧹 Clear Chat (For Me)</button>
+                  {isAdmin && (
+                    <>
+                      <button onClick={() => { setShowMenu(false); handleInvite(); }} style={styles.dropdownBtn}>📋 Invite Link</button>
+                      <button onClick={() => { setShowMenu(false); setRenameInput(activeChannel.name); setIsRenaming(true); }} style={styles.dropdownBtn}>✏️ Rename Channel</button>
+                      <button onClick={() => { setShowMenu(false); setShowDeleteModal(true); }} style={{ ...styles.dropdownBtn, color: '#ef4444' }}>🗑️ Delete Channel</button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
             {activeChannel.description && (
               <>
                 <span style={styles.divider}>|</span>

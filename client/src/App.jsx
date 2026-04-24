@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import AuthPage from './pages/AuthPage';
@@ -7,6 +7,12 @@ import JoinInvitePage from './pages/JoinInvitePage';
 import './index.css';
 
 export default function App() {
+  useEffect(() => {
+    const theme = localStorage.getItem('nexus_theme') || 'light';
+    if (theme === 'dark') document.documentElement.classList.add('theme-dark');
+    else document.documentElement.classList.remove('theme-dark');
+  }, []);
+
   return (
     <BrowserRouter>
       <Routes>
