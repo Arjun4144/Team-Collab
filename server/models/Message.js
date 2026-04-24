@@ -4,6 +4,8 @@ const messageSchema = new mongoose.Schema({
   channel: { type: mongoose.Schema.Types.ObjectId, ref: 'Channel', required: true },
   sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   content: { type: String, default: '' },
+  messageType: { type: String, enum: ['text', 'audio'], default: 'text' },
+  audioDuration: { type: Number, default: 0 },
   intentType: {
     type: String,
     enum: ['discussion', 'announcement', 'decision', 'action', 'fyi'],

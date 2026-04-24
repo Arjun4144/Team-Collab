@@ -1,8 +1,179 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import useStore from '../../store/useStore';
 import api from '../../utils/api';
 import { getInitials, formatTime, intentConfig } from '../../utils/helpers';
+
+// Global: only one audio plays at a time
+let globalPlayingAudio = null;
+let globalPlayingSetter = null;
+
+function AudioPlayer({ audioUrl, duration: serverDuration, isOwn }) {
+  const audioRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrTime] = useState(0);
+  const [totalDuration, setTotalDuration] = useState(serverDuration || 0);
+  const [speed, setSpeed] = useState(1);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const onTime = () => {
+      setCurrTime(audio.currentTime);
+      if (audio.duration && isFinite(audio.duration)) {
+        setProgress((audio.currentTime / audio.duration) * 100);
+        setTotalDuration(audio.duration);
+      }
+    };
+    const onEnd = () => { setPlaying(false); setProgress(0); setCurrTime(0); globalPlayingAudio = null; };
+    const onLoaded = () => { if (audio.duration && isFinite(audio.duration)) setTotalDuration(audio.duration); };
+    audio.addEventListener('timeupdate', onTime);
+    audio.addEventListener('ended', onEnd);
+    audio.addEventListener('loadedmetadata', onLoaded);
+    return () => { audio.removeEventListener('timeupdate', onTime); audio.removeEventListener('ended', onEnd); audio.removeEventListener('loadedmetadata', onLoaded); };
+  }, []);
+
+  const toggle = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (playing) {
+      audio.pause();
+      setPlaying(false);
+      globalPlayingAudio = null;
+    } else {
+      // Pause any other playing audio
+      if (globalPlayingAudio && globalPlayingAudio !== audio) {
+        globalPlayingAudio.pause();
+        if (globalPlayingSetter) globalPlayingSetter(false);
+      }
+      globalPlayingAudio = audio;
+      globalPlayingSetter = setPlaying;
+      audio.playbackRate = speed;
+      audio.play().catch(() => {});
+      setPlaying(true);
+    }
+  }, [playing, speed]);
+
+  const handleSeek = (e) => {
+    const audio = audioRef.current;
+    if (!audio || !audio.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audio.currentTime = pct * audio.duration;
+  };
+
+  const cycleSpeed = () => {
+    const next = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
+    setSpeed(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  };
+
+  const fmt = (s) => { const m = Math.floor(s / 60); return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`; };
+
+  return (
+    <div style={audioStyles.container}>
+      <audio ref={audioRef} src={audioUrl} preload="metadata" />
+      <button onClick={toggle} style={{ ...audioStyles.playBtn, background: isOwn ? 'rgba(14,165,233,0.25)' : 'var(--bg-elevated)' }}>
+        {playing ? '⏸' : '▶'}
+      </button>
+      <div style={audioStyles.middle}>
+        <div style={audioStyles.trackOuter} onClick={handleSeek}>
+          <div style={{ ...audioStyles.trackFill, width: `${progress}%` }} />
+          <div style={{ ...audioStyles.trackThumb, left: `${progress}%` }} />
+        </div>
+        <div style={audioStyles.timeRow}>
+          <span style={audioStyles.timeText}>{fmt(currentTime)}</span>
+          <span style={audioStyles.timeText}>{fmt(totalDuration)}</span>
+        </div>
+      </div>
+      <button onClick={cycleSpeed} style={audioStyles.speedBtn}>{speed}x</button>
+    </div>
+  );
+}
+
+const audioStyles = {
+  container: { display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', minWidth: 200 },
+  playBtn: {
+    width: 36, height: 36, borderRadius: '50%', border: 'none', cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, flexShrink: 0,
+    color: 'var(--text-primary)', transition: 'all 0.15s'
+  },
+  middle: { flex: 1, display: 'flex', flexDirection: 'column', gap: 2 },
+  trackOuter: {
+    height: 6, background: 'var(--bg-hover)', borderRadius: 3, cursor: 'pointer',
+    position: 'relative', overflow: 'visible'
+  },
+  trackFill: {
+    height: '100%', background: 'var(--accent)', borderRadius: 3, transition: 'width 0.1s linear'
+  },
+  trackThumb: {
+    position: 'absolute', top: -3, width: 12, height: 12, borderRadius: '50%',
+    background: 'var(--accent)', border: '2px solid var(--bg-surface)', transform: 'translateX(-50%)',
+    transition: 'left 0.1s linear'
+  },
+  timeRow: { display: 'flex', justifyContent: 'space-between' },
+  timeText: { fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' },
+  speedBtn: {
+    fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-glow)',
+    border: 'none', borderRadius: 4, padding: '2px 6px', cursor: 'pointer', flexShrink: 0
+  }
+};
+
+function DownloadIcon({ fileUrl }) {
+  const [downloaded, setDownloaded] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    if (downloading || downloaded) return;
+    setDownloading(true);
+    try {
+      const resp = await fetch(fileUrl);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileUrl.split('/').pop() || 'file';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setDownloaded(true);
+    } catch {
+      setDownloading(false);
+    }
+  };
+
+  if (downloaded) return null;
+
+  return (
+    <div style={dlStyles.wrap}>
+      <span style={{ fontSize: 20, opacity: 0.7 }}>📄</span>
+      <button onClick={handleDownload} style={dlStyles.dlBtn} title="Download">
+        {downloading ? (
+          <span style={dlStyles.spinner} />
+        ) : (
+          <span style={{ fontSize: 14 }}>⬇</span>
+        )}
+      </button>
+    </div>
+  );
+}
+
+const dlStyles = {
+  wrap: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px' },
+  dlBtn: {
+    width: 28, height: 28, borderRadius: '50%', border: '1px solid var(--border)',
+    background: 'var(--bg-elevated)', cursor: 'pointer', display: 'flex',
+    alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s',
+    color: 'var(--text-secondary)', flexShrink: 0
+  },
+  spinner: {
+    width: 12, height: 12, border: '2px solid var(--border)',
+    borderTop: '2px solid var(--accent)', borderRadius: '50%',
+    animation: 'spin 0.6s linear infinite', display: 'block'
+  }
+};
 
 export default function MessageBubble({ message, onReply }) {
   const { user, updateMessage, setActiveThread, setReplyingTo, hideMessage, channels, deleteMessageForEveryone, messages } = useStore();
@@ -160,13 +331,25 @@ export default function MessageBubble({ message, onReply }) {
           </div>
         )}
 
-        <div style={styles.content}>
-          {message.content ? message.content.split(/(@\w+)/g).map((part, i) => 
-            part.startsWith('@') ? (
-              <span key={i} style={styles.mention}>{part}</span>
-            ) : part
-          ) : null}
-        </div>
+        {/* Content — text messages */}
+        {message.messageType !== 'audio' && (
+          <div style={styles.content}>
+            {message.content ? message.content.split(/(@\w+)/g).map((part, i) => 
+              part.startsWith('@') ? (
+                <span key={i} style={styles.mention}>{part}</span>
+              ) : part
+            ) : null}
+          </div>
+        )}
+
+        {/* Audio player — voice notes */}
+        {message.messageType === 'audio' && message.attachments?.[0] && (() => {
+          const att = message.attachments[0];
+          const actualUrl = att.url?.startsWith('/uploads/') ? att.url : (att.url?.startsWith('blob:') ? att.url : `/uploads/${att.url}`);
+          const backendUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+          const audioUrl = att.url?.startsWith('blob:') ? att.url : `${backendUrl}${actualUrl}`;
+          return <AudioPlayer audioUrl={audioUrl} duration={message.audioDuration || 0} isOwn={isOwn} />;
+        })()}
 
         {message.verdict && (
           <div style={styles.verdictBox}>
@@ -175,28 +358,23 @@ export default function MessageBubble({ message, onReply }) {
           </div>
         )}
 
-        {message.attachments && message.attachments.length > 0 && (
+        {message.attachments && message.attachments.length > 0 && message.messageType !== 'audio' && (
           <div style={styles.attachments}>
             {message.attachments.map((att, i) => {
-              const isImage = att.type.startsWith('image/');
-              const actualUrl = att.url.startsWith('/uploads/') ? att.url : `/uploads/${att.url}`;
+              const isImage = att.type?.startsWith('image/');
+              const isAudio = att.type?.startsWith('audio/');
+              if (isAudio) return null; // handled by AudioPlayer
+              const actualUrl = att.url?.startsWith('/uploads/') ? att.url : `/uploads/${att.url}`;
               const backendUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
               const fileUrl = `${backendUrl}${actualUrl}`;
               return (
                 <div key={i} style={styles.attachment}>
                   {isImage ? (
                     <a href={fileUrl} target="_blank" rel="noreferrer">
-                      <img src={fileUrl} alt={att.name} style={styles.imagePreview} />
+                      <img src={fileUrl} alt="" style={styles.imagePreview} />
                     </a>
                   ) : (
-                    <div style={styles.fileCard}>
-                      <span style={styles.fileIcon}>📄</span>
-                      <div style={styles.fileInfo}>
-                        <div style={styles.fileName}>{att.name}</div>
-                        <div style={styles.fileSize}>{att.size ? (att.size / 1024 / 1024).toFixed(2) + ' MB' : ''}</div>
-                      </div>
-                      <a href={fileUrl} target="_blank" rel="noreferrer" style={styles.downloadBtn}>Download</a>
-                    </div>
+                    <DownloadIcon fileUrl={fileUrl} />
                   )}
                 </div>
               );
@@ -382,14 +560,8 @@ const styles = {
     fontWeight: 600, cursor: 'pointer'
   },
   attachments: { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 },
-  attachment: { overflow: 'hidden', borderRadius: 8, border: '1px solid var(--border)' },
-  imagePreview: { maxWidth: '100%', maxHeight: 250, display: 'block', objectFit: 'contain', background: 'var(--bg-void)' },
-  fileCard: { display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: 'var(--bg-base)' },
-  fileIcon: { fontSize: 24 },
-  fileInfo: { flex: 1, minWidth: 0 },
-  fileName: { fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  fileSize: { fontSize: 11, color: 'var(--text-muted)' },
-  downloadBtn: { fontSize: 12, color: 'var(--accent)', textDecoration: 'none', fontWeight: 600, padding: '4px 8px', background: 'var(--accent-glow)', borderRadius: 4 },
+  attachment: { overflow: 'hidden', borderRadius: 8 },
+  imagePreview: { maxWidth: '100%', maxHeight: 250, display: 'block', objectFit: 'contain', background: 'var(--bg-void)', borderRadius: 8 },
   retryBtn: { background: 'none', border: '1px solid #ef4444', color: '#ef4444', borderRadius: 4, padding: '2px 8px', fontSize: 10, cursor: 'pointer' },
   cancelBtn: { background: 'none', border: '1px solid var(--border)', color: 'var(--text-muted)', borderRadius: 4, padding: '2px 8px', fontSize: 10, cursor: 'pointer' }
 };

@@ -183,7 +183,9 @@ const useStore = create((set, get) => ({
             url: fileData.fileUrl,
             type: tempMessage.localFile.type,
             size: fileData.size
-          }]
+          }],
+          messageType: tempMessage.messageType || 'text',
+          audioDuration: tempMessage.audioDuration || 0
         });
         
         data = msgRes.data;
@@ -193,7 +195,9 @@ const useStore = create((set, get) => ({
           content: tempMessage.content,
           intentType: tempMessage.intentType,
           priority: tempMessage.priority,
-          threadParent: tempMessage.threadParent?._id || tempMessage.threadParent || null
+          threadParent: tempMessage.threadParent?._id || tempMessage.threadParent || null,
+          messageType: tempMessage.messageType || 'text',
+          audioDuration: tempMessage.audioDuration || 0
         });
         data = res.data;
       }

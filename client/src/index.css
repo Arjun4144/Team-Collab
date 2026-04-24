@@ -139,6 +139,10 @@ a { color: inherit; text-decoration: none; }
 
 .animate-fade { animation: fadeIn 0.2s ease both; }
 .animate-slide { animation: slideIn 0.2s ease both; }
+@keyframes waveAnim { from { transform: scaleY(0.4); } to { transform: scaleY(1.2); } }
+@keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .dropdown-item:hover {
   background: var(--bg-hover) !important;

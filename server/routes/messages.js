@@ -22,7 +22,11 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage, 
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    // Accept images, documents, and audio files
+    cb(null, true);
+  }
 });
 
 router.get('/channel/:channelId', auth, async (req, res) => {
@@ -57,7 +61,7 @@ router.get('/:id/thread', auth, async (req, res) => {
 
 router.post('/', auth, async (req, res) => {
   try {
-    let { channel, content, intentType, priority, threadParent, attachments } = req.body;
+    let { channel, content, intentType, priority, threadParent, attachments, messageType, audioDuration } = req.body;
     content = content || '';
     
     console.log("attachments received:", attachments);
@@ -73,7 +77,9 @@ router.post('/', auth, async (req, res) => {
       sender: req.user._id,
       threadParent: threadParent || null,
       readBy: [req.user._id],
-      attachments: attachments || []
+      attachments: attachments || [],
+      messageType: messageType || 'text',
+      audioDuration: audioDuration || 0
     });
 
     if (threadParent) {
