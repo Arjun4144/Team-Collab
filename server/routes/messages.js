@@ -8,6 +8,7 @@ const { auth } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { generateSummary } = require('../utils/gemini');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -285,6 +286,59 @@ router.post('/channel/:channelId/read', auth, async (req, res) => {
     res.json({ success: true });
   } catch (err) { 
     res.status(500).json({ error: err.message }); 
+  }
+});
+
+// AI Summary endpoint
+router.post('/channel/:channelId/summarize', auth, async (req, res) => {
+  try {
+    // Verify membership
+    const channel = await Channel.findById(req.params.channelId);
+    if (!channel) return res.status(404).json({ error: 'Channel not found' });
+    const isMember = channel.members.some(m => m.toString() === req.user._id.toString());
+    if (!isMember) return res.status(403).json({ error: 'Not a member of this channel' });
+
+    // Fetch last 50 messages
+    const messages = await Message.find({
+      channel: req.params.channelId,
+      hiddenBy: { $ne: req.user._id }
+    })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate('sender', 'name');
+
+    // Filter to messages with real content (> 3 chars)
+    const validMessages = messages.filter(m => m.content && m.content.trim().length > 3);
+
+    if (!validMessages.length) {
+      return res.json({ summary: '• No messages to summarize.', count: 0 });
+    }
+
+    // Format messages for Gemini (oldest first)
+    const formatted = validMessages.reverse().map(m => {
+      const prefix = [];
+      if (m.priority === 'urgent') prefix.push('[URGENT]');
+      if (m.intentType && m.intentType !== 'discussion') prefix.push(`[${m.intentType.toUpperCase()}]`);
+      const sender = m.sender?.name || 'Unknown';
+      return `${prefix.join(' ')} ${sender}: ${m.content}`.trim();
+    }).join('\n');
+
+    // Guard: not enough meaningful content
+    if (!formatted || formatted.length < 30) {
+      return res.json({ summary: '• Not enough meaningful content to summarize.', count: validMessages.length });
+    }
+
+    console.log(`[Summarize] Sending ${validMessages.length} messages (${formatted.length} chars) to Gemini`);
+
+    const summary = await generateSummary(formatted);
+    res.json({ summary: summary || '• No summary available.', count: validMessages.length });
+  } catch (err) {
+    console.error('Summarize error:', err?.message || err);
+    // Always return valid JSON, never crash
+    res.json({
+      summary: '• AI summary temporarily unavailable. Please try again later.',
+      count: 0
+    });
   }
 });
 
