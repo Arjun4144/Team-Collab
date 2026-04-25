@@ -20,6 +20,12 @@ export default function App() {
         <Route path="/invite/:inviteCode" element={
           <ProtectedRoute><JoinInvitePage /></ProtectedRoute>
         } />
+        <Route path="/workspace/:workspaceId/channel/:channelId" element={
+          <ProtectedRoute><WorkspacePage /></ProtectedRoute>
+        } />
+        <Route path="/workspace/:workspaceId" element={
+          <ProtectedRoute><WorkspacePage /></ProtectedRoute>
+        } />
         <Route path="/" element={
           <ProtectedRoute><WorkspacePage /></ProtectedRoute>
         } />

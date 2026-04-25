@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Channel = require('../models/Channel');
+const Workspace = require('../models/Workspace');
 const { JWT_SECRET } = require('../middleware/auth');
 
 const onlineUsers = new Map();
@@ -32,6 +33,11 @@ function initSocket(io) {
       channels.forEach(ch => socket.join(`channel:${ch._id}`));
     }).catch(() => {});
 
+    // Auto-join all workspace rooms the user is a member of
+    Workspace.find({ members: userId }).then(workspaces => {
+      workspaces.forEach(ws => socket.join(`workspace:${ws._id}`));
+    }).catch(() => {});
+
     socket.on('channel:join', async (channelId) => {
       // Keep for explicit joins when creating/joining new channels dynamically
       try {
@@ -46,6 +52,15 @@ function initSocket(io) {
       socket.leave(`channel:${channelId}`);
     });
 
+    socket.on('workspace:join', async (workspaceId) => {
+      try {
+        const workspace = await Workspace.findById(workspaceId);
+        if (workspace && workspace.members.some(m => m.toString() === userId)) {
+          socket.join(`workspace:${workspaceId}`);
+        }
+      } catch {}
+    });
+
     socket.on('message:send', (message) => {
       const channelId = message.channel?._id || message.channel;
       socket.to(`channel:${channelId}`).emit('message:new', message);
@@ -57,7 +72,12 @@ function initSocket(io) {
     });
 
     socket.on('task:update', (task) => {
-      io.emit('task:updated', task);
+      const channelId = task.channel?._id || task.channel;
+      if (channelId) {
+        io.to(`channel:${channelId}`).emit('task:updated', task);
+      } else {
+        io.emit('task:updated', task);
+      }
     });
 
     socket.on('typing:start', ({ channelId }) => {

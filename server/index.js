@@ -8,6 +8,7 @@ const morgan = require('morgan');
 const path = require('path');
 
 const authRoutes = require('./routes/auth');
+const workspaceRoutes = require('./routes/workspaces');
 const channelRoutes = require('./routes/channels');
 const messageRoutes = require('./routes/messages');
 const taskRoutes = require('./routes/tasks');
@@ -30,6 +31,7 @@ app.set('onlineUsers', onlineUsers);
 app.use(morgan('dev'));
 
 app.use('/api/auth', authRoutes);
+app.use('/api/workspaces', workspaceRoutes);
 app.use('/api/channels', channelRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/tasks', taskRoutes);

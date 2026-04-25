@@ -14,6 +14,9 @@ export const useSocket = (socket) => {
         import('../utils/api').then(({ default: api }) => {
           api.post(`/messages/channel/${channelId}/read`).catch(() => {});
         });
+      } else {
+        // Increment unread count for non-active channels
+        state.incrementChannelUnread(channelId);
       }
       state.addMessage(msg);
     };
@@ -27,7 +30,44 @@ export const useSocket = (socket) => {
         state.updateMessage({ ...msg, ...data.updates });
       }
     };
-    const onMessageDeleted = (data) => useStore.getState().removeMessage(data.channel, data._id);
+    const onReplyAdded = (data) => {
+      const state = useStore.getState();
+      const reply = data.reply;
+      const channelId = String(reply?.channel?._id || reply?.channel);
+      
+      if (reply) {
+        const activeChId = state.activeChannel ? String(state.activeChannel._id) : null;
+        if (activeChId === channelId) {
+          import('../utils/api').then(({ default: api }) => {
+            api.post(`/messages/channel/${channelId}/read`).catch(() => {});
+          });
+        } else {
+          state.incrementChannelUnread(channelId);
+        }
+        state.addMessage(reply);
+      }
+
+      const msgs = state.messages[channelId] || [];
+      const msg = msgs.find(m => String(m._id) === String(data.messageId));
+      if (msg) {
+        state.updateMessageReplyCount(channelId, data.messageId, data.replyCount);
+      }
+    };
+    const onReplyDeleted = (data) => {
+      const state = useStore.getState();
+      const channelId = data.channelId || data.channel;
+      const msgs = state.messages[channelId] || [];
+      const parentMsg = msgs.find(m => String(m._id) === String(data.messageId));
+      if (parentMsg) {
+        state.updateMessageReplyCount(channelId, data.messageId, data.replyCount);
+      }
+      state.softDeleteMessage(channelId, data.replyId);
+    };
+    const onMessageDeleted = (data) => {
+      const state = useStore.getState();
+      const channelId = data.channelId || data.channel;
+      state.softDeleteMessage(channelId, data._id);
+    };
     const onTaskUp     = (task) => useStore.getState().updateTask(task);
     const onDecision   = (d)   => useStore.getState().addDecision(d);
     const onTypingStart = ({ userId, userName, channelId }) => {
@@ -54,24 +94,71 @@ export const useSocket = (socket) => {
     };
 
     const onChannelUpdated = () => {
-      useStore.getState().fetchChannels().then(() => {
-        const s = useStore.getState();
-        if (s.activeChannel) {
-          const updated = s.channels.find(c => c._id === s.activeChannel._id);
-          if (updated) useStore.getState().setActiveChannel(updated);
-        }
-      });
+      const s = useStore.getState();
+      if (s.activeWorkspace) {
+        s.fetchChannelsForWorkspace(s.activeWorkspace._id).then(() => {
+          const state = useStore.getState();
+          if (state.activeChannel && state.activeWorkspace) {
+            const wsChannels = state.channels[state.activeWorkspace._id] || [];
+            const updated = wsChannels.find(c => c._id === state.activeChannel._id);
+            if (updated) useStore.getState().setActiveChannel(updated);
+          }
+        });
+      }
     };
 
-    const onChannelDeleted = (channelId) => {
-      useStore.getState().fetchChannels().then(() => {
-        const s = useStore.getState();
-        if (s.activeChannel?._id === channelId) {
-          const nextActive = s.channels.length > 0 ? s.channels[0] : null;
-          useStore.getState().setActiveChannel(nextActive);
-          if (nextActive) useStore.getState().fetchMessages(nextActive._id);
+    const onChannelCreated = ({ channel, workspaceId }) => {
+      const s = useStore.getState();
+      if (workspaceId) {
+        s.fetchChannelsForWorkspace(workspaceId);
+      }
+      // Auto-join the socket room for the new channel
+      socket.emit('channel:join', channel._id);
+    };
+
+    const onChannelDeleted = (data) => {
+      const channelId = typeof data === 'string' ? data : data.channelId;
+      const s = useStore.getState();
+      if (s.activeWorkspace) {
+        s.fetchChannelsForWorkspace(s.activeWorkspace._id).then(() => {
+          const state = useStore.getState();
+          if (state.activeChannel?._id === channelId) {
+            const wsChannels = state.channels[state.activeWorkspace?._id] || [];
+            const general = wsChannels.find(c => c.name === 'general') || wsChannels[0] || null;
+            if (general) useStore.getState().selectChannel(general);
+            else useStore.getState().setActiveChannel(null);
+          }
+        });
+      }
+    };
+
+    const onWorkspaceUpdated = (workspace) => {
+      useStore.getState().fetchWorkspaces();
+      const s = useStore.getState();
+      if (s.activeWorkspace?._id === workspace._id) {
+        useStore.setState({ activeWorkspace: workspace });
+      }
+    };
+
+    const onWorkspaceDeleted = (workspaceId) => {
+      const s = useStore.getState();
+      useStore.setState(state => ({
+        workspaces: state.workspaces.filter(ws => ws._id !== workspaceId)
+      }));
+      if (s.activeWorkspace?._id === workspaceId) {
+        const remaining = useStore.getState().workspaces;
+        if (remaining.length > 0) {
+          useStore.getState().selectWorkspace(remaining[0]);
+        } else {
+          useStore.setState({ activeWorkspace: null, activeChannel: null });
         }
-      });
+      }
+    };
+
+    const onChannelSummary = ({ channelId, summary, userId }) => {
+      const state = useStore.getState();
+      const isMe = String(state.user?._id) === String(userId);
+      state.setChannelSummary(channelId, summary, isMe);
     };
 
     const onConnect = () => {
@@ -88,6 +175,8 @@ export const useSocket = (socket) => {
     socket.on('message:new',      onNewMessage);
     socket.on('message:resolved', onResolved);
     socket.on('messageUpdated',   onMessageUpdated);
+    socket.on('replyAdded', onReplyAdded);
+    socket.on('replyDeleted', onReplyDeleted);
     socket.on('message:deleted',  onMessageDeleted);
     socket.on('task:updated',     onTaskUp);
     socket.on('decision:new',     onDecision);
@@ -97,13 +186,19 @@ export const useSocket = (socket) => {
     socket.on('user:offline',     onUserOffline);
     socket.on('notification:mention', onMention);
     socket.on('channel:updated',  onChannelUpdated);
+    socket.on('channel:created',  onChannelCreated);
     socket.on('channel:deleted',  onChannelDeleted);
+    socket.on('channel:summary',  onChannelSummary);
+    socket.on('workspace:updated', onWorkspaceUpdated);
+    socket.on('workspace:deleted', onWorkspaceDeleted);
 
     return () => {
       socket.off('connect',          onConnect);
       socket.off('message:new',      onNewMessage);
       socket.off('message:resolved', onResolved);
       socket.off('messageUpdated',   onMessageUpdated);
+      socket.off('replyAdded', onReplyAdded);
+      socket.off('replyDeleted', onReplyDeleted);
       socket.off('message:deleted',  onMessageDeleted);
       socket.off('task:updated',     onTaskUp);
       socket.off('decision:new',     onDecision);
@@ -113,7 +208,11 @@ export const useSocket = (socket) => {
       socket.off('user:offline',     onUserOffline);
       socket.off('notification:mention', onMention);
       socket.off('channel:updated',  onChannelUpdated);
+      socket.off('channel:created',  onChannelCreated);
       socket.off('channel:deleted',  onChannelDeleted);
+      socket.off('channel:summary',  onChannelSummary);
+      socket.off('workspace:updated', onWorkspaceUpdated);
+      socket.off('workspace:deleted', onWorkspaceDeleted);
     };
   }, [socket]);
 };

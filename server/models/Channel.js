@@ -10,7 +10,8 @@ const channelSchema = new mongoose.Schema({
   admins: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   inviteCode: { type: String, unique: true, sparse: true },
   isArchived: { type: Boolean, default: false },
-  unreadCount: { type: Map, of: Number, default: {} }
+  unreadCount: { type: Map, of: Number, default: {} },
+  workspaceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Workspace', default: null }
 }, { timestamps: true });
 
 // Generate a random invite code
@@ -18,5 +19,7 @@ channelSchema.methods.generateInviteCode = function() {
   this.inviteCode = crypto.randomBytes(16).toString('hex');
   return this.inviteCode;
 };
+
+channelSchema.index({ workspaceId: 1 });
 
 module.exports = mongoose.model('Channel', channelSchema);

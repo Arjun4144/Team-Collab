@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const Channel = require('../models/Channel');
+const Workspace = require('../models/Workspace');
 const Message = require('../models/Message');
 const Task = require('../models/Task');
 const Decision = require('../models/Decision');
@@ -10,11 +11,23 @@ const isChannelAdmin = (channel, userId) => {
   return channel.admins.some(adminId => adminId.toString() === userId.toString());
 };
 
-// GET all channels the current user is a member of
-router.get('/', auth, async (req, res) => {
+// Helper to check workspace membership
+const checkWorkspaceMembership = async (workspaceId, userId) => {
+  const workspace = await Workspace.findById(workspaceId);
+  if (!workspace) return { ok: false, status: 404, error: 'Workspace not found' };
+  const isMember = workspace.members.some(m => m.toString() === userId.toString());
+  if (!isMember) return { ok: false, status: 403, error: 'You are not a member of this workspace' };
+  return { ok: true, workspace };
+};
+
+// GET channels for a workspace
+router.get('/workspace/:workspaceId', auth, async (req, res) => {
   try {
+    const { ok, status, error } = await checkWorkspaceMembership(req.params.workspaceId, req.user._id);
+    if (!ok) return res.status(status).json({ error });
+
     const channels = await Channel.find({
-      members: req.user._id,
+      workspaceId: req.params.workspaceId,
       isArchived: false
     }).populate('members', 'name email avatar status').populate('createdBy', 'name').lean();
 
@@ -31,17 +44,59 @@ router.get('/', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// CREATE a new channel (creator is auto-added as member and admin)
+// GET all channels the current user is a member of (backward compatible)
+router.get('/', auth, async (req, res) => {
+  try {
+    const channels = await Channel.find({
+      members: req.user._id,
+      isArchived: false,
+      workspaceId: { $ne: null }
+    }).populate('members', 'name email avatar status').populate('createdBy', 'name').lean();
+
+    const channelsWithUnread = await Promise.all(channels.map(async (ch) => {
+      const unreadCount = await Message.countDocuments({
+        channel: ch._id,
+        readBy: { $ne: req.user._id },
+        hiddenBy: { $ne: req.user._id }
+      });
+      return { ...ch, unreadCount };
+    }));
+
+    res.json(channelsWithUnread);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// CREATE a new channel inside a workspace (workspace admin only)
 router.post('/', auth, async (req, res) => {
   try {
-    const { name, description, members } = req.body;
+    const { name, description, workspaceId } = req.body;
+    if (!workspaceId) return res.status(400).json({ error: 'workspaceId is required' });
+
+    const workspace = await Workspace.findById(workspaceId);
+    if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+    
+    const isAdmin = workspace.admins.some(a => a.toString() === req.user._id.toString());
+    if (!isAdmin) return res.status(403).json({ error: 'Only workspace admins can create channels' });
+
     const channel = await Channel.create({
       name, description, type: 'private',
       createdBy: req.user._id,
-      members: [...new Set([req.user._id.toString(), ...(members || [])])],
-      admins: [req.user._id]
+      members: workspace.members, // All workspace members get access
+      admins: workspace.admins,
+      workspaceId
     });
     await channel.populate('members', 'name email avatar status');
+
+    // Broadcast to all workspace members
+    const io = req.app.get('io');
+    const onlineUsers = req.app.get('onlineUsers');
+    if (io && onlineUsers) {
+      workspace.members.forEach(memberId => {
+        const socketId = onlineUsers.get(memberId.toString());
+        if (socketId) io.to(socketId).emit('channel:created', { channel, workspaceId });
+      });
+    }
+
     res.status(201).json(channel);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -59,7 +114,7 @@ router.get('/:id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GENERATE invite link — channel admin only
+// GENERATE invite link — channel admin only (kept for backward compat, but workspace invite is preferred)
 router.post('/:id/invite', auth, async (req, res) => {
   try {
     const channel = await Channel.findById(req.params.id);
@@ -91,12 +146,21 @@ router.post('/join/:inviteCode', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// RENAME / UPDATE channel — channel admin only
+// RENAME / UPDATE channel — workspace admin only
 router.patch('/:id', auth, async (req, res) => {
   try {
     const channel = await Channel.findById(req.params.id);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
-    if (!isChannelAdmin(channel, req.user._id)) return res.status(403).json({ error: 'Only channel admins can modify the channel' });
+    
+    // Check workspace admin status
+    if (channel.workspaceId) {
+      const workspace = await Workspace.findById(channel.workspaceId);
+      if (workspace && !workspace.admins.some(a => a.toString() === req.user._id.toString())) {
+        return res.status(403).json({ error: 'Only workspace admins can modify channels' });
+      }
+    } else if (!isChannelAdmin(channel, req.user._id)) {
+      return res.status(403).json({ error: 'Only channel admins can modify the channel' });
+    }
     
     const { name, description } = req.body;
     if (name) channel.name = name;
@@ -117,12 +181,26 @@ router.patch('/:id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE channel — channel admin only (cascade deletes)
+// DELETE channel — workspace admin only (cascade deletes)
 router.delete('/:id', auth, async (req, res) => {
   try {
     const channel = await Channel.findById(req.params.id);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
-    if (!isChannelAdmin(channel, req.user._id)) return res.status(403).json({ error: 'Only channel admins can delete the channel' });
+
+    // Prevent deleting #general
+    if (channel.name === 'general') {
+      return res.status(400).json({ error: 'Cannot delete the #general channel' });
+    }
+
+    // Check workspace admin status
+    if (channel.workspaceId) {
+      const workspace = await Workspace.findById(channel.workspaceId);
+      if (workspace && !workspace.admins.some(a => a.toString() === req.user._id.toString())) {
+        return res.status(403).json({ error: 'Only workspace admins can delete channels' });
+      }
+    } else if (!isChannelAdmin(channel, req.user._id)) {
+      return res.status(403).json({ error: 'Only channel admins can delete the channel' });
+    }
     
     // Cascade deletes
     await Promise.all([
@@ -137,7 +215,7 @@ router.delete('/:id', auth, async (req, res) => {
     if (io && onlineUsers) {
       channel.members.forEach(memberId => {
         const socketId = onlineUsers.get(memberId.toString());
-        if (socketId) io.to(socketId).emit('channel:deleted', channel._id);
+        if (socketId) io.to(socketId).emit('channel:deleted', { channelId: channel._id, workspaceId: channel.workspaceId });
       });
     }
 

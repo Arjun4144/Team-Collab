@@ -47,7 +47,9 @@ export default function ThreadPanel() {
           <span style={styles.parentName}>{liveParent.sender?.name || 'Unknown'}</span>
           <span style={styles.parentTime}>{liveParent.createdAt ? formatTime(liveParent.createdAt) : ''}</span>
         </div>
-        <div style={styles.parentContent}>{liveParent.content || 'Message'}</div>
+        <div style={{ ...styles.parentContent, ...(liveParent.isDeleted ? { fontStyle: 'italic', opacity: 0.7 } : {}) }}>
+          {liveParent.content || 'Message'}
+        </div>
       </div>
 
       <div style={styles.divider}>
@@ -55,9 +57,15 @@ export default function ThreadPanel() {
       </div>
 
       <div style={styles.replies}>
-        {replies.map(r => (
-          <MessageBubble key={r._id} message={r} />
-        ))}
+        {replies.length === 0 ? (
+          <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, fontStyle: 'italic' }}>
+            No replies yet
+          </div>
+        ) : (
+          replies.map(r => (
+            <MessageBubble key={r._id} message={r} />
+          ))
+        )}
       </div>
 
     </div>
@@ -66,7 +74,7 @@ export default function ThreadPanel() {
 
 const styles = {
   panel: {
-    width: 360, borderLeft: '1px solid var(--border)', background: 'var(--bg-surface)',
+    width: 'var(--panel-width, 360px)', borderLeft: '1px solid var(--border)', background: 'var(--bg-surface)',
     display: 'flex', flexDirection: 'column', flexShrink: 0, overflow: 'hidden'
   },
   header: {

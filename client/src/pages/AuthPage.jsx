@@ -24,7 +24,13 @@ export default function AuthPage() {
       setToken(data.token);
       setUser(data.user);
       initSocket(data.token);
-      navigate('/');
+      const pendingInvite = sessionStorage.getItem('pendingInvite');
+      if (pendingInvite) {
+        sessionStorage.removeItem('pendingInvite');
+        navigate(`/invite/${pendingInvite}`);
+      } else {
+        navigate('/');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Something went wrong');
     } finally {
@@ -80,17 +86,6 @@ export default function AuthPage() {
             <label style={styles.label}>Password</label>
             <input style={styles.input} type="password" placeholder="••••••••" required {...inp('password')} />
           </div>
-
-          {mode === 'register' && (
-            <div style={styles.field}>
-              <label style={styles.label}>Role</label>
-              <select style={styles.input} {...inp('role')}>
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
-                <option value="guest">Guest</option>
-              </select>
-            </div>
-          )}
 
           {error && <div style={styles.error}>{error}</div>}
 

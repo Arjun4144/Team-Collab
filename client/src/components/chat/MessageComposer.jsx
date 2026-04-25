@@ -8,7 +8,7 @@ const INTENTS  = Object.keys(intentConfig).filter(i => i !== 'discussion');
 const PRIORITIES = Object.keys(priorityConfig);
 const MAX_RECORD_SEC = 120; // 2 minutes
 
-export default function MessageComposer({ onSent }) {
+export default function MessageComposer({ onSent, onSummarize }) {
   const { activeChannel, user, addMessage, users, replyingTo, setReplyingTo, activeThread, setActiveThread } = useStore();
   const [content, setContent]   = useState('');
   const [intent, setIntent]     = useState('');
@@ -378,12 +378,17 @@ export default function MessageComposer({ onSent }) {
         )}
 
         <div style={styles.inputRow}>
-          {/* Left: attach button */}
+          {/* Left: attach button and summarize button */}
           {!isRecording && (
             <>
               <button type="button" onClick={() => fileInputRef.current?.click()} style={styles.attachBtn} title="Attach file">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
               </button>
+              {onSummarize && (
+                <button type="button" onClick={onSummarize} style={styles.summarizeBtn} title="Summarize conversation">
+                  ⚡
+                </button>
+              )}
               <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} accept="image/*,.pdf,.doc,.docx,.txt,audio/*" />
             </>
           )}
@@ -475,6 +480,11 @@ const styles = {
     width: 38, height: 38, borderRadius: '50%', background: 'none', color: 'var(--text-muted)',
     border: 'none', cursor: 'pointer', fontSize: 20, display: 'flex', alignItems: 'center',
     justifyContent: 'center', flexShrink: 0, transition: 'color 0.15s'
+  },
+  summarizeBtn: {
+    width: 38, height: 38, borderRadius: '50%', background: 'var(--bg-hover)', color: 'var(--text-primary)',
+    border: 'none', cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center',
+    justifyContent: 'center', flexShrink: 0, transition: 'all 0.15s'
   },
   sendBtn: {
     width: 38, height: 38, borderRadius: '50%',

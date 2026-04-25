@@ -176,7 +176,7 @@ const dlStyles = {
 };
 
 export default function MessageBubble({ message, onReply }) {
-  const { user, updateMessage, setActiveThread, setReplyingTo, hideMessage, channels, deleteMessageForEveryone, messages } = useStore();
+  const { user, updateMessage, setActiveThread, setReplyingTo, hideMessage, activeChannel, deleteMessageForEveryone, messages } = useStore();
   const [showVerdict, setShowVerdict] = useState(false);
   const [verdict, setVerdict] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
@@ -218,7 +218,7 @@ export default function MessageBubble({ message, onReply }) {
 
   const intent = intentConfig[message.intentType] || intentConfig.discussion;
   const isOwn = message.sender?._id === user?._id;
-  const currentChannel = channels.find(c => c._id === (message.channel?._id || message.channel));
+  const currentChannel = activeChannel;
   const isAdmin = currentChannel?.admins?.includes(user?._id);
   const canEditPriority = isOwn || isAdmin;
 
@@ -333,7 +333,7 @@ export default function MessageBubble({ message, onReply }) {
 
         {/* Content — text messages */}
         {message.messageType !== 'audio' && (
-          <div style={styles.content}>
+          <div style={{ ...styles.content, ...(message.isDeleted ? { fontStyle: 'italic', opacity: 0.7 } : {}) }}>
             {message.content ? message.content.split(/(@\w+)/g).map((part, i) => 
               part.startsWith('@') ? (
                 <span key={i} style={styles.mention}>{part}</span>
@@ -462,7 +462,7 @@ export default function MessageBubble({ message, onReply }) {
                   style={styles.dropdownItem}
                 >Delete for me</button>
                 
-                {isAdmin && !message.isTemp && (
+                {(isAdmin || isOwn) && !message.isTemp && (
                   <button className="dropdown-item"
                     onClick={() => { deleteMessageForEveryone(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
                     style={{ ...styles.dropdownItem, color: '#ef4444' }}

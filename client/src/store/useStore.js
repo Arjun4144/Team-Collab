@@ -13,30 +13,98 @@ const useStore = create((set, get) => ({
   },
   logout: () => {
     localStorage.removeItem('nexus_token');
-    set({ user: null, token: null, channels: [], messages: {}, activeChannel: null });
+    localStorage.removeItem('nexus_last_workspace');
+    localStorage.removeItem('nexus_last_channel');
+    set({ user: null, token: null, workspaces: [], channels: {}, messages: {}, summaries: {}, activeWorkspace: null, activeChannel: null });
   },
 
-  // Channels
-  channels: [],
+  // Workspaces
+  workspaces: [],
+  activeWorkspace: null,
+  setWorkspaces: (workspaces) => set({ workspaces }),
+  setActiveWorkspace: (workspace) => {
+    if (workspace) localStorage.setItem('nexus_last_workspace', workspace._id);
+    set({ activeWorkspace: workspace });
+  },
+
+  // Channels (keyed by workspaceId)
+  channels: {},  // { workspaceId: [channels] }
   activeChannel: null,
-  setChannels: (channels) => set({ channels }),
-  setActiveChannel: (channel) => set({ activeChannel: channel }),
+  setChannels: (workspaceId, channels) => set(s => ({
+    channels: { ...s.channels, [workspaceId]: channels }
+  })),
+  setActiveChannel: (channel) => {
+    if (channel) localStorage.setItem('nexus_last_channel', channel._id);
+    set({ activeChannel: channel });
+  },
   selectChannel: async (ch) => {
     const s = get();
+    if (!ch || !ch._id) {
+      set({ activeChannel: null });
+      localStorage.removeItem('nexus_last_channel');
+      return;
+    }
     if (s.activeChannel?._id !== ch._id) {
       import('../utils/socket').then(({ getSocket }) => {
         const socket = getSocket();
         socket?.emit('channel:join', ch._id);
       });
       set({ activeChannel: ch });
+      if (ch) localStorage.setItem('nexus_last_channel', ch._id);
       s.fetchMessages(ch._id);
       try {
         s.markChannelRead(ch._id);
+        // Reset unread count in channels state (server-backed)
+        const wsId = ch.workspaceId;
+        if (wsId) {
+          set(s2 => ({
+            channels: {
+              ...s2.channels,
+              [wsId]: (s2.channels[wsId] || []).map(c =>
+                c._id === ch._id ? { ...c, unreadCount: 0 } : c
+              )
+            }
+          }));
+        }
         await api.post(`/messages/channel/${ch._id}/read`);
       } catch {}
     }
   },
-  addChannel: (channel) => set(s => ({ channels: [channel, ...s.channels] })),
+  addChannel: (workspaceId, channel) => set(s => ({
+    channels: {
+      ...s.channels,
+      [workspaceId]: [channel, ...(s.channels[workspaceId] || [])]
+    }
+  })),
+  incrementChannelUnread: (channelId) => set(s => {
+    const newChannels = { ...s.channels };
+    for (const wsId of Object.keys(newChannels)) {
+      const idx = newChannels[wsId].findIndex(c => c._id === channelId);
+      if (idx !== -1) {
+        newChannels[wsId] = newChannels[wsId].map(c =>
+          c._id === channelId ? { ...c, unreadCount: (c.unreadCount || 0) + 1 } : c
+        );
+        break;
+      }
+    }
+    return { channels: newChannels };
+  }),
+  selectWorkspace: async (workspace) => {
+    const s = get();
+    set({ activeWorkspace: workspace });
+    if (workspace) {
+      localStorage.setItem('nexus_last_workspace', workspace._id);
+      await s.fetchChannelsForWorkspace(workspace._id);
+      // Auto-select #general or last channel
+      const wsChannels = get().channels[workspace._id] || [];
+      const lastChId = localStorage.getItem('nexus_last_channel');
+      let targetChannel = wsChannels.find(c => c._id === lastChId);
+      if (!targetChannel) targetChannel = wsChannels.find(c => c.name === 'general');
+      if (!targetChannel && wsChannels.length > 0) targetChannel = wsChannels[0];
+      if (targetChannel) s.selectChannel(targetChannel);
+      else set({ activeChannel: null });
+    }
+  },
 
   // Messages
   messages: {},
@@ -95,11 +163,15 @@ const useStore = create((set, get) => ({
       }
       
       const processedMsg = { ...msg, readBy: readByArray };
+      const currentMsgs = s.messages[channelId] || [];
+      const exists = currentMsgs.some(m => String(m._id) === String(msg._id));
       
       return {
         messages: {
           ...s.messages,
-          [channelId]: [...(s.messages[channelId] || []), processedMsg]
+          [channelId]: exists 
+            ? currentMsgs.map(m => String(m._id) === String(msg._id) ? processedMsg : m)
+            : [...currentMsgs, processedMsg]
         }
       };
     });
@@ -117,7 +189,7 @@ const useStore = create((set, get) => ({
         messages: {
           ...s.messages,
           [channelId]: (s.messages[channelId] || []).map(m =>
-            m._id === updated._id ? processedUpdated : m
+            String(m._id) === String(updated._id) ? processedUpdated : m
           )
         }
       };
@@ -129,7 +201,7 @@ const useStore = create((set, get) => ({
       set(s => ({
         messages: {
           ...s.messages,
-          [channelId]: (s.messages[channelId] || []).filter(m => m._id !== messageId)
+          [channelId]: (s.messages[channelId] || []).filter(m => String(m._id) !== String(messageId))
         }
       }));
     } catch {}
@@ -137,8 +209,30 @@ const useStore = create((set, get) => ({
   removeMessage: (channelId, messageId) => set(s => ({
     messages: {
       ...s.messages,
-      [channelId]: (s.messages[channelId] || []).filter(m => m._id !== messageId)
+      [channelId]: (s.messages[channelId] || []).filter(m => String(m._id) !== String(messageId))
     }
+  })),
+  updateMessageReplyCount: (channelId, messageId, replyCount) => set(s => ({
+    messages: {
+      ...s.messages,
+      [channelId]: (s.messages[channelId] || []).map(m => 
+        String(m._id) === String(messageId) ? { ...m, replyCount } : m
+      )
+    },
+    activeThread: (s.activeThread && String(s.activeThread._id) === String(messageId)) 
+      ? { ...s.activeThread, replyCount } 
+      : s.activeThread
+  })),
+  softDeleteMessage: (channelId, messageId) => set(s => ({
+    messages: {
+      ...s.messages,
+      [channelId]: (s.messages[channelId] || []).map(m => 
+        String(m._id) === String(messageId) ? { ...m, content: 'Deleted by admin', attachments: [], isDeleted: true } : m
+      )
+    },
+    activeThread: (s.activeThread && String(s.activeThread._id) === String(messageId))
+      ? { ...s.activeThread, content: 'Deleted by admin', attachments: [], isDeleted: true }
+      : s.activeThread
   })),
   deleteMessageForEveryone: async (channelId, messageId) => {
     try {
@@ -205,17 +299,22 @@ const useStore = create((set, get) => ({
       // Replace temp message with real message
       set(s => {
         const msgs = s.messages[channelId] || [];
+        const alreadyExists = msgs.some(m => String(m._id) === String(data._id));
         return {
           messages: {
             ...s.messages,
-            [channelId]: msgs.map(m => m._id === tempMessage._id ? data : m)
+            [channelId]: alreadyExists 
+              ? msgs.filter(m => String(m._id) !== String(tempMessage._id))
+              : msgs.map(m => String(m._id) === String(tempMessage._id) ? data : m)
           }
         };
       });
       
       import('../utils/socket').then(({ getSocket }) => {
         const socket = getSocket();
-        socket?.emit('message:send', data);
+        if (!data.threadParent) {
+          socket?.emit('message:send', data);
+        }
       });
       
     } catch (err) {
@@ -279,6 +378,25 @@ const useStore = create((set, get) => ({
   replyingTo: null,
   setReplyingTo: (msg) => set({ replyingTo: msg }),
 
+  // Summaries
+  summaries: {}, // { [channelId]: { text: string, hidden: boolean, activeUser: boolean } }
+  setChannelSummary: (channelId, summary, activeUser = false) => set(s => ({
+    summaries: {
+      ...s.summaries,
+      [channelId]: { text: summary, hidden: false, activeUser }
+    }
+  })),
+  hideChannelSummary: (channelId) => set(s => {
+    const current = s.summaries[channelId];
+    if (!current) return s;
+    return {
+      summaries: {
+        ...s.summaries,
+        [channelId]: { ...current, hidden: true }
+      }
+    };
+  }),
+
   // Typing
   typing: {},
   setTyping: (channelId, userId, userName, isTyping) => set(s => {
@@ -305,10 +423,34 @@ const useStore = create((set, get) => ({
   }),
 
   // Async loaders
+  fetchWorkspaces: async () => {
+    try {
+      const { data } = await api.get('/workspaces');
+      set({ workspaces: data });
+      return data;
+    } catch { return []; }
+  },
+  fetchChannelsForWorkspace: async (workspaceId) => {
+    try {
+      const { data } = await api.get(`/channels/workspace/${workspaceId}`);
+      set(s => ({ channels: { ...s.channels, [workspaceId]: data } }));
+      return data;
+    } catch { return []; }
+  },
   fetchChannels: async () => {
+    // Fetch all channels user is in (backward compat used by socket handlers)
     try {
       const { data } = await api.get('/channels');
-      set({ channels: data });
+      // Group them by workspaceId
+      const grouped = {};
+      data.forEach(ch => {
+        const wsId = ch.workspaceId;
+        if (wsId) {
+          if (!grouped[wsId]) grouped[wsId] = [];
+          grouped[wsId].push(ch);
+        }
+      });
+      set(s => ({ channels: { ...s.channels, ...grouped } }));
     } catch {}
   },
   fetchMessages: async (channelId) => {
@@ -335,69 +477,133 @@ const useStore = create((set, get) => ({
       set({ users: data });
     } catch {}
   },
-  generateInviteLink: async (channelId) => {
+  
+  // Workspace actions
+  createWorkspace: async (name) => {
+    const { data } = await api.post('/workspaces', { name });
+    set(s => ({ workspaces: [data, ...s.workspaces] }));
+    return data;
+  },
+  renameWorkspace: async (workspaceId, name) => {
+    const { data } = await api.put(`/workspaces/${workspaceId}`, { name });
+    set(s => ({
+      workspaces: s.workspaces.map(ws => ws._id === workspaceId ? data : ws),
+      activeWorkspace: s.activeWorkspace?._id === workspaceId ? data : s.activeWorkspace
+    }));
+    return data;
+  },
+  deleteWorkspace: async (workspaceId) => {
+    await api.delete(`/workspaces/${workspaceId}`);
+    const s = get();
+    set(s2 => ({
+      workspaces: s2.workspaces.filter(ws => ws._id !== workspaceId),
+      activeWorkspace: s2.activeWorkspace?._id === workspaceId ? null : s2.activeWorkspace,
+      activeChannel: s2.activeWorkspace?._id === workspaceId ? null : s2.activeChannel
+    }));
+    // Select next workspace
+    const remaining = get().workspaces;
+    if (remaining.length > 0 && (!get().activeWorkspace)) {
+      get().selectWorkspace(remaining[0]);
+    }
+  },
+  generateInviteLink: async (workspaceId) => {
     try {
-      const { data } = await api.post(`/channels/${channelId}/invite`);
+      const { data } = await api.post(`/workspaces/${workspaceId}/invite`);
       return data;
     } catch (err) {
       throw err;
     }
   },
-  joinChannelByInvite: async (inviteCode) => {
+  joinWorkspaceByInvite: async (inviteCode) => {
     try {
-      const { data } = await api.post(`/channels/join/${inviteCode}`);
+      const { data } = await api.post(`/workspaces/join/${inviteCode}`);
       if (!data.alreadyMember) {
-        set(s => ({ channels: [data.channel, ...s.channels] }));
+        set(s => ({ workspaces: [data.workspace, ...s.workspaces] }));
       }
-      return data.channel;
+      return data.workspace;
     } catch (err) {
       throw err;
     }
   },
+
+  // Channel actions (workspace-scoped)
+  createChannel: async (workspaceId, name, description) => {
+    const { data } = await api.post('/channels', { name, description, workspaceId });
+    set(s => ({
+      channels: {
+        ...s.channels,
+        [workspaceId]: [data, ...(s.channels[workspaceId] || [])]
+      }
+    }));
+    return data;
+  },
   deleteChannel: async (channelId) => {
     await api.delete(`/channels/${channelId}`);
-    await get().fetchChannels();
     const s = get();
-    let nextActive = s.activeChannel;
-    if (s.activeChannel?._id === channelId) {
-      nextActive = s.channels.length > 0 ? s.channels[0] : null;
-      if (nextActive) {
-        s.fetchMessages(nextActive._id);
-      }
+    // Refresh channels for active workspace
+    if (s.activeWorkspace) {
+      await s.fetchChannelsForWorkspace(s.activeWorkspace._id);
     }
-    set({ activeChannel: nextActive });
+    if (s.activeChannel?._id === channelId) {
+      const wsChannels = get().channels[s.activeWorkspace?._id] || [];
+      const general = wsChannels.find(c => c.name === 'general') || wsChannels[0] || null;
+      if (general) s.selectChannel(general);
+      else set({ activeChannel: null });
+    }
   },
   renameChannel: async (channelId, name, description) => {
     await api.patch(`/channels/${channelId}`, { name, description });
-    await get().fetchChannels();
     const s = get();
+    if (s.activeWorkspace) {
+      await s.fetchChannelsForWorkspace(s.activeWorkspace._id);
+    }
     if (s.activeChannel?._id === channelId) {
-      const updatedChannel = s.channels.find(c => c._id === channelId);
-      if (updatedChannel) {
-        set({ activeChannel: updatedChannel });
-      }
+      const wsChannels = get().channels[s.activeWorkspace?._id] || [];
+      const updatedChannel = wsChannels.find(c => c._id === channelId);
+      if (updatedChannel) set({ activeChannel: updatedChannel });
     }
   },
   removeMember: async (channelId, userId) => {
     const { data } = await api.delete(`/channels/${channelId}/members/${userId}`);
-    set(s => ({
-      channels: s.channels.map(c => c._id === channelId ? data : c),
-      activeChannel: s.activeChannel?._id === channelId ? data : s.activeChannel
-    }));
+    const s = get();
+    if (s.activeWorkspace) {
+      const wsId = s.activeWorkspace._id;
+      set(s2 => ({
+        channels: {
+          ...s2.channels,
+          [wsId]: (s2.channels[wsId] || []).map(c => c._id === channelId ? data : c)
+        },
+        activeChannel: s2.activeChannel?._id === channelId ? data : s2.activeChannel
+      }));
+    }
   },
   promoteMember: async (channelId, userId) => {
     const { data } = await api.post(`/channels/${channelId}/admins/${userId}`);
-    set(s => ({
-      channels: s.channels.map(c => c._id === channelId ? data : c),
-      activeChannel: s.activeChannel?._id === channelId ? data : s.activeChannel
-    }));
+    const s = get();
+    if (s.activeWorkspace) {
+      const wsId = s.activeWorkspace._id;
+      set(s2 => ({
+        channels: {
+          ...s2.channels,
+          [wsId]: (s2.channels[wsId] || []).map(c => c._id === channelId ? data : c)
+        },
+        activeChannel: s2.activeChannel?._id === channelId ? data : s2.activeChannel
+      }));
+    }
   },
   demoteMember: async (channelId, userId) => {
     const { data } = await api.delete(`/channels/${channelId}/admins/${userId}`);
-    set(s => ({
-      channels: s.channels.map(c => c._id === channelId ? data : c),
-      activeChannel: s.activeChannel?._id === channelId ? data : s.activeChannel
-    }));
+    const s = get();
+    if (s.activeWorkspace) {
+      const wsId = s.activeWorkspace._id;
+      set(s2 => ({
+        channels: {
+          ...s2.channels,
+          [wsId]: (s2.channels[wsId] || []).map(c => c._id === channelId ? data : c)
+        },
+        activeChannel: s2.activeChannel?._id === channelId ? data : s2.activeChannel
+      }));
+    }
   }
 }));
 

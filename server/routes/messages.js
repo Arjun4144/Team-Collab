@@ -83,8 +83,20 @@ router.post('/', auth, async (req, res) => {
       audioDuration: audioDuration || 0
     });
 
+    await message.populate('sender', 'name avatar email status');
+
     if (threadParent) {
-      await Message.findByIdAndUpdate(threadParent, { $inc: { replyCount: 1 } });
+      const updatedParent = await Message.findByIdAndUpdate(threadParent, { $inc: { replyCount: 1 } }, { new: true });
+      if (updatedParent) {
+        const io = req.app.get('io');
+        if (io) {
+          io.to(`channel:${channel}`).emit('replyAdded', {
+            messageId: updatedParent._id,
+            replyCount: updatedParent.replyCount,
+            reply: message
+          });
+        }
+      }
     }
 
     // Auto-create task if intent is 'action'
@@ -107,8 +119,6 @@ router.post('/', auth, async (req, res) => {
         channel, sourceMessage: message._id
       });
     }
-
-    await message.populate('sender', 'name avatar email status');
 
     if (content) {
       const mentionRegex = /@(\w+)/g;
@@ -253,9 +263,10 @@ router.delete('/:id/everyone', auth, async (req, res) => {
     const channel = await Channel.findById(message.channel);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
     
-    // Check if user is admin
+    // Check if user is admin or the sender
     const isAdmin = channel.admins.some(a => a.toString() === req.user._id.toString());
-    if (!isAdmin) return res.status(403).json({ error: 'Only admins can delete messages for everyone' });
+    const isSender = message.sender.toString() === req.user._id.toString();
+    if (!isAdmin && !isSender) return res.status(403).json({ error: 'Only admins or the sender can delete messages for everyone' });
     
     // If it has attachments, delete from disk
     if (message.attachments && message.attachments.length > 0) {
@@ -270,7 +281,24 @@ router.delete('/:id/everyone', auth, async (req, res) => {
     
     const io = req.app.get('io');
     if (io) {
-      io.to(`channel:${channel._id}`).emit('message:deleted', { _id: message._id, channel: channel._id });
+      if (message.threadParent) {
+        const updatedParent = await Message.findByIdAndUpdate(
+          message.threadParent, 
+          { $inc: { replyCount: -1 } },
+          { new: true }
+        );
+        if (updatedParent) {
+          io.to(`channel:${channel._id}`).emit('replyDeleted', {
+            messageId: updatedParent._id,
+            replyId: message._id,
+            replyCount: updatedParent.replyCount,
+            deletedBy: req.user._id,
+            channelId: channel._id
+          });
+        }
+      } else {
+        io.to(`channel:${channel._id}`).emit('messageDeleted', { _id: message._id, channel: channel._id });
+      }
     }
     
     res.json({ success: true });
@@ -331,7 +359,19 @@ router.post('/channel/:channelId/summarize', auth, async (req, res) => {
     console.log(`[Summarize] Sending ${validMessages.length} messages (${formatted.length} chars) to Gemini`);
 
     const summary = await generateSummary(formatted);
-    res.json({ summary: summary || '• No summary available.', count: validMessages.length });
+    const finalSummary = summary || '• No summary available.';
+
+    // Broadcast to other users in the channel
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`channel:${req.params.channelId}`).emit('channel:summary', {
+        channelId: req.params.channelId,
+        summary: finalSummary,
+        userId: req.user._id
+      });
+    }
+
+    res.json({ summary: finalSummary, count: validMessages.length });
   } catch (err) {
     console.error('Summarize error:', err?.message || err);
     // Always return valid JSON, never crash

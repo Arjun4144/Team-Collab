@@ -1,10 +1,11 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
-const User     = require('./models/User');
-const Channel  = require('./models/Channel');
-const Message  = require('./models/Message');
-const Task     = require('./models/Task');
-const Decision = require('./models/Decision');
+const User      = require('./models/User');
+const Workspace = require('./models/Workspace');
+const Channel   = require('./models/Channel');
+const Message   = require('./models/Message');
+const Task      = require('./models/Task');
+const Decision  = require('./models/Decision');
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus';
 
@@ -14,7 +15,7 @@ async function seed() {
 
   // Clean slate
   await Promise.all([
-    User.deleteMany({}), Channel.deleteMany({}),
+    User.deleteMany({}), Workspace.deleteMany({}), Channel.deleteMany({}),
     Message.deleteMany({}), Task.deleteMany({}), Decision.deleteMany({})
   ]);
   console.log('Cleared existing data');
@@ -35,76 +36,111 @@ async function seed() {
   ]) {
     const u = await User.findById(raw._id);
     u.password = raw.password;
+    u.markModified('password');
     await u.save();
   }
   console.log('Created 4 users');
 
-  // ── Channels ───────────────────────────────────────────────
-  const [general, engineering, product, design] = await Channel.insertMany([
-    { name: 'general',     description: 'Company-wide announcements',   type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [alice._id] },
-    { name: 'engineering', description: 'Engineering team discussions', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id], admins: [alice._id] },
-    { name: 'product',     description: 'Product decisions & roadmap',  type: 'private', createdBy: carol._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [carol._id] },
-    { name: 'design',      description: 'Design reviews & critiques',   type: 'private', createdBy: carol._id, members: [alice._id, carol._id], admins: [carol._id] },
+  // ── Workspaces ─────────────────────────────────────────────
+  const [wsCompany, wsEngineering, wsProduct] = await Workspace.insertMany([
+    {
+      name: 'Company Hub',
+      createdBy: alice._id,
+      members: [alice._id, bob._id, carol._id, dave._id],
+      admins: [alice._id]
+    },
+    {
+      name: 'Engineering',
+      createdBy: alice._id,
+      members: [alice._id, bob._id, carol._id],
+      admins: [alice._id]
+    },
+    {
+      name: 'Product',
+      createdBy: carol._id,
+      members: [alice._id, bob._id, carol._id, dave._id],
+      admins: [carol._id]
+    }
   ]);
-  console.log('Created 4 channels');
+  console.log('Created 3 workspaces');
+
+  // ── Channels ───────────────────────────────────────────────
+  const [companyGeneral, companyAnnouncements] = await Channel.insertMany([
+    { name: 'general',       description: 'Company-wide discussions', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [alice._id], workspaceId: wsCompany._id },
+    { name: 'announcements', description: 'Important announcements',  type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [alice._id], workspaceId: wsCompany._id },
+  ]);
+
+  const [engGeneral, engBackend, engDesign] = await Channel.insertMany([
+    { name: 'general',  description: 'Engineering team discussions', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id], admins: [alice._id], workspaceId: wsEngineering._id },
+    { name: 'backend',  description: 'Backend & API discussions',    type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id], admins: [alice._id], workspaceId: wsEngineering._id },
+    { name: 'design',   description: 'Design reviews & critiques',   type: 'private', createdBy: carol._id, members: [alice._id, carol._id],          admins: [carol._id], workspaceId: wsEngineering._id },
+  ]);
+
+  const [prodGeneral, prodRoadmap] = await Channel.insertMany([
+    { name: 'general',  description: 'Product discussions',         type: 'private', createdBy: carol._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [carol._id], workspaceId: wsProduct._id },
+    { name: 'roadmap',  description: 'Product decisions & roadmap', type: 'private', createdBy: carol._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [carol._id], workspaceId: wsProduct._id },
+  ]);
+  console.log('Created 7 channels across 3 workspaces');
 
   // ── Messages ───────────────────────────────────────────────
   const msgs = await Message.insertMany([
-    // general
+    // Company Hub > general
     {
-      channel: general._id, sender: alice._id,
+      channel: companyGeneral._id, sender: alice._id,
       content: 'Welcome to Nexus! This is your new professional communication hub. Use intent-tagged messages to keep conversations clear and actionable.',
       intentType: 'announcement', priority: 'high',
       readBy: [alice._id, bob._id, carol._id]
     },
     {
-      channel: general._id, sender: bob._id,
+      channel: companyGeneral._id, sender: bob._id,
       content: 'Great to be here! The structured messaging approach looks really promising.',
       intentType: 'fyi', priority: 'normal',
       readBy: [bob._id, alice._id]
     },
     {
-      channel: general._id, sender: alice._id,
+      channel: companyGeneral._id, sender: alice._id,
       content: 'Q3 company-wide goal: ship the new authentication system before August 31st.',
       intentType: 'decision', priority: 'urgent',
       readBy: [alice._id, bob._id, carol._id],
       isResolved: false
     },
-    // engineering
+    // Engineering > general
     {
-      channel: engineering._id, sender: bob._id,
+      channel: engGeneral._id, sender: bob._id,
       content: 'Should we migrate from REST to GraphQL for the mobile API? There are performance arguments on both sides.',
       intentType: 'discussion', priority: 'normal',
       readBy: [bob._id, alice._id], replyCount: 2
     },
     {
-      channel: engineering._id, sender: alice._id,
+      channel: engGeneral._id, sender: alice._id,
       content: 'We are adopting TypeScript across the entire backend codebase starting next sprint. All new files must be .ts.',
       intentType: 'decision', priority: 'high',
       readBy: [alice._id, bob._id, carol._id],
       isResolved: false
     },
+    // Engineering > backend
     {
-      channel: engineering._id, sender: carol._id,
+      channel: engBackend._id, sender: carol._id,
       content: 'Review and merge the auth-refactor PR before Friday. Bob is the reviewer.',
       intentType: 'action', priority: 'high',
       readBy: [carol._id, bob._id]
     },
-    // product
+    // Product > general
     {
-      channel: product._id, sender: carol._id,
+      channel: prodGeneral._id, sender: carol._id,
       content: 'The v2.0 roadmap has been finalised. Key items: intent messaging, decision log, AI summaries. Full doc in Notion.',
       intentType: 'announcement', priority: 'high',
       readBy: [carol._id, alice._id, dave._id]
     },
     {
-      channel: product._id, sender: dave._id,
+      channel: prodGeneral._id, sender: dave._id,
       content: 'Should onboarding be a wizard flow or a blank canvas with tooltips? Looking for input from the team.',
       intentType: 'discussion', priority: 'normal',
       readBy: [dave._id]
     },
+    // Product > roadmap
     {
-      channel: product._id, sender: carol._id,
+      channel: prodRoadmap._id, sender: carol._id,
       content: 'We will go with wizard-style onboarding for v1 to reduce drop-off. Can revisit in v2 based on analytics.',
       intentType: 'decision', priority: 'normal',
       isResolved: true, verdict: 'Wizard onboarding selected for v1. Re-evaluate post-launch.',
@@ -118,35 +154,35 @@ async function seed() {
     {
       title: 'Review and merge auth-refactor PR',
       description: 'Check for security issues, test coverage, and code quality.',
-      assignee: bob._id, createdBy: carol._id, channel: engineering._id,
+      assignee: bob._id, createdBy: carol._id, channel: engBackend._id,
       status: 'todo', priority: 'high',
       dueDate: new Date(Date.now() + 2 * 86400000)
     },
     {
       title: 'Migrate user service to TypeScript',
       description: 'Convert models, routes, and middleware.',
-      assignee: alice._id, createdBy: alice._id, channel: engineering._id,
+      assignee: alice._id, createdBy: alice._id, channel: engGeneral._id,
       status: 'in_progress', priority: 'normal',
       dueDate: new Date(Date.now() + 7 * 86400000)
     },
     {
       title: 'Design onboarding wizard screens',
       description: 'Create Figma mockups for all 5 wizard steps.',
-      assignee: carol._id, createdBy: carol._id, channel: product._id,
+      assignee: carol._id, createdBy: carol._id, channel: prodGeneral._id,
       status: 'todo', priority: 'normal',
       dueDate: new Date(Date.now() + 5 * 86400000)
     },
     {
       title: 'Write v2.0 release notes',
       description: 'Summary of all new features with screenshots.',
-      assignee: dave._id, createdBy: carol._id, channel: product._id,
+      assignee: dave._id, createdBy: carol._id, channel: prodRoadmap._id,
       status: 'todo', priority: 'low',
       dueDate: new Date(Date.now() + 14 * 86400000)
     },
     {
       title: 'Set up MongoDB Atlas production cluster',
       description: 'Configure backups, alerts, and IP whitelist.',
-      assignee: alice._id, createdBy: alice._id, channel: engineering._id,
+      assignee: alice._id, createdBy: alice._id, channel: engGeneral._id,
       status: 'done', priority: 'urgent',
       completedAt: new Date()
     },
@@ -159,7 +195,7 @@ async function seed() {
       title: 'Q3 target: ship new authentication system',
       body: 'The entire team commits to shipping the new JWT + OAuth2 authentication system before August 31st.',
       rationale: 'Current auth is a security liability and blocks mobile app launch.',
-      owner: alice._id, channel: general._id, status: 'active',
+      owner: alice._id, channel: companyGeneral._id, status: 'active',
       tags: ['security', 'Q3', 'auth'],
       acknowledgedBy: [alice._id, bob._id]
     },
@@ -167,7 +203,7 @@ async function seed() {
       title: 'Adopt TypeScript across backend',
       body: 'All new backend code must be written in TypeScript. Existing files to be migrated incrementally over Q3.',
       rationale: 'Type safety reduces runtime errors. Industry standard for scale.',
-      owner: alice._id, channel: engineering._id, status: 'active',
+      owner: alice._id, channel: engGeneral._id, status: 'active',
       tags: ['typescript', 'engineering', 'standards'],
       acknowledgedBy: [alice._id, carol._id]
     },
@@ -175,7 +211,7 @@ async function seed() {
       title: 'Wizard-style onboarding for v1',
       body: 'The v1 onboarding experience will use a 5-step wizard rather than a blank canvas.',
       rationale: 'A/B test data from competitors shows wizard reduces drop-off by ~40% at signup.',
-      owner: carol._id, channel: product._id, status: 'active',
+      owner: carol._id, channel: prodRoadmap._id, status: 'active',
       tags: ['onboarding', 'UX', 'v1'],
       acknowledgedBy: [carol._id, alice._id, dave._id]
     },
@@ -183,7 +219,7 @@ async function seed() {
       title: 'Use MongoDB for message storage',
       body: 'Messages will be stored in MongoDB, user/channel/task metadata in PostgreSQL (or a single Mongo collection for simplicity in MVP).',
       rationale: 'Flexible document schema suits evolving message types and attachments.',
-      owner: alice._id, channel: engineering._id, status: 'active',
+      owner: alice._id, channel: engBackend._id, status: 'active',
       tags: ['architecture', 'database'],
       acknowledgedBy: [alice._id, bob._id, carol._id]
     },
