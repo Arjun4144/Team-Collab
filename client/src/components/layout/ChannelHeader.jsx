@@ -1,5 +1,6 @@
 import React from 'react';
 import useStore from '../../store/useStore';
+import CallButton from '../../video-call/components/CallButton';
 
 export default function ChannelHeader() {
   const { activeChannel, activeWorkspace, setRightPanel, rightPanel, users, user } = useStore();
@@ -27,6 +28,7 @@ export default function ChannelHeader() {
       </div>
       <div style={styles.actions}>
         <span style={styles.memberCount}>👥 {totalMembers} · <span style={{ color: '#10b981' }}>●</span> {onlineMembers}</span>
+        <CallButton channelId={activeChannel._id} />
         {[{ id: 'tasks', label: '⚡ Tasks' }, { id: 'decisions', label: '✅ Decisions' }, { id: 'members', label: '👥 Members' }].map(({ id, label }) => (
           <button key={id} onClick={() => setRightPanel(id)} style={{ ...styles.btn, ...(rightPanel === id ? styles.btnActive : {}) }}>{label}</button>
         ))}

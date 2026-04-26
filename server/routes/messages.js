@@ -276,8 +276,10 @@ router.delete('/:id/everyone', auth, async (req, res) => {
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       });
     }
-
-    await Message.findByIdAndDelete(req.params.id);
+    // Soft-delete: keep message in DB but mark as deleted
+    await Message.findByIdAndUpdate(req.params.id, {
+      $set: { isDeleted: true, content: 'Deleted by admin', attachments: [] }
+    });
     
     const io = req.app.get('io');
     if (io) {
@@ -297,7 +299,7 @@ router.delete('/:id/everyone', auth, async (req, res) => {
           });
         }
       } else {
-        io.to(`channel:${channel._id}`).emit('messageDeleted', { _id: message._id, channel: channel._id });
+        io.to(`channel:${channel._id}`).emit('message:deleted', { _id: message._id, channel: channel._id });
       }
     }
     

@@ -67,7 +67,7 @@ const useStore = create((set, get) => ({
           }));
         }
         await api.post(`/messages/channel/${ch._id}/read`);
-      } catch {}
+      } catch { }
     }
   },
   addChannel: (workspaceId, channel) => set(s => ({
@@ -113,11 +113,11 @@ const useStore = create((set, get) => ({
     const activeChId = s.activeChannel?._id ? String(s.activeChannel._id) : null;
     const targetChId = String(channelId);
     const isActive = activeChId === targetChId;
-    
+
     const processedMsgs = msgs.map(m => {
       let readByArray = Array.isArray(m.readBy) ? m.readBy : [];
       readByArray = readByArray.map(rb => (typeof rb === 'object' && rb !== null && rb._id) ? String(rb._id) : String(rb));
-      
+
       if (isActive && userId && !readByArray.includes(userId)) {
         readByArray = [...readByArray, userId];
       }
@@ -137,7 +137,7 @@ const useStore = create((set, get) => ({
         [channelId]: s.messages[channelId].map(m => {
           let readByArray = Array.isArray(m.readBy) ? m.readBy : [];
           readByArray = readByArray.map(rb => (typeof rb === 'object' && rb !== null && rb._id) ? String(rb._id) : String(rb));
-          
+
           if (!readByArray.includes(userId)) {
             return { ...m, readBy: [...readByArray, userId] };
           }
@@ -149,27 +149,27 @@ const useStore = create((set, get) => ({
   addMessage: (msg) => {
     const rawChannelId = msg.channel?._id || msg.channel;
     const channelId = String(rawChannelId);
-    
+
     set(s => {
       const userId = s.user?._id ? String(s.user._id) : null;
       const activeChId = s.activeChannel?._id ? String(s.activeChannel._id) : null;
       const isActive = activeChId === channelId;
-      
+
       let readByArray = Array.isArray(msg.readBy) ? msg.readBy : [];
       readByArray = readByArray.map(rb => (typeof rb === 'object' && rb !== null && rb._id) ? String(rb._id) : String(rb));
-      
+
       if (isActive && userId && !readByArray.includes(userId)) {
         readByArray = [...readByArray, userId];
       }
-      
+
       const processedMsg = { ...msg, readBy: readByArray };
       const currentMsgs = s.messages[channelId] || [];
       const exists = currentMsgs.some(m => String(m._id) === String(msg._id));
-      
+
       return {
         messages: {
           ...s.messages,
-          [channelId]: exists 
+          [channelId]: exists
             ? currentMsgs.map(m => String(m._id) === String(msg._id) ? processedMsg : m)
             : [...currentMsgs, processedMsg]
         }
@@ -179,7 +179,7 @@ const useStore = create((set, get) => ({
   updateMessage: (updated) => {
     const rawChannelId = updated.channel?._id || updated.channel;
     const channelId = String(rawChannelId);
-    
+
     set(s => {
       let readByArray = Array.isArray(updated.readBy) ? updated.readBy : [];
       readByArray = readByArray.map(rb => (typeof rb === 'object' && rb !== null && rb._id) ? String(rb._id) : String(rb));
@@ -204,7 +204,7 @@ const useStore = create((set, get) => ({
           [channelId]: (s.messages[channelId] || []).filter(m => String(m._id) !== String(messageId))
         }
       }));
-    } catch {}
+    } catch { }
   },
   removeMessage: (channelId, messageId) => set(s => ({
     messages: {
@@ -215,18 +215,18 @@ const useStore = create((set, get) => ({
   updateMessageReplyCount: (channelId, messageId, replyCount) => set(s => ({
     messages: {
       ...s.messages,
-      [channelId]: (s.messages[channelId] || []).map(m => 
+      [channelId]: (s.messages[channelId] || []).map(m =>
         String(m._id) === String(messageId) ? { ...m, replyCount } : m
       )
     },
-    activeThread: (s.activeThread && String(s.activeThread._id) === String(messageId)) 
-      ? { ...s.activeThread, replyCount } 
+    activeThread: (s.activeThread && String(s.activeThread._id) === String(messageId))
+      ? { ...s.activeThread, replyCount }
       : s.activeThread
   })),
   softDeleteMessage: (channelId, messageId) => set(s => ({
     messages: {
       ...s.messages,
-      [channelId]: (s.messages[channelId] || []).map(m => 
+      [channelId]: (s.messages[channelId] || []).map(m =>
         String(m._id) === String(messageId) ? { ...m, content: 'Deleted by admin', attachments: [], isDeleted: true } : m
       )
     },
@@ -235,9 +235,11 @@ const useStore = create((set, get) => ({
       : s.activeThread
   })),
   deleteMessageForEveryone: async (channelId, messageId) => {
+    // Optimistically soft-delete for the current user immediately
+    get().softDeleteMessage(channelId, messageId);
     try {
       await api.delete(`/messages/${messageId}/everyone`);
-    } catch {}
+    } catch { }
   },
   performSend: async (tempMessage) => {
     const channelId = tempMessage.channel._id || tempMessage.channel;
@@ -246,9 +248,9 @@ const useStore = create((set, get) => ({
       if (tempMessage.localFile) {
         const formData = new FormData();
         formData.append('file', tempMessage.localFile);
-        
+
         const uploadRes = await axios.post(`${api.defaults.baseURL}/messages/channel/${channelId}/upload`, formData, {
-          headers: { 
+          headers: {
             Authorization: `Bearer ${localStorage.getItem('nexus_token')}`
           },
           onUploadProgress: (progressEvent) => {
@@ -256,14 +258,14 @@ const useStore = create((set, get) => ({
             set(s => ({
               messages: {
                 ...s.messages,
-                [channelId]: (s.messages[channelId] || []).map(m => 
+                [channelId]: (s.messages[channelId] || []).map(m =>
                   m._id === tempMessage._id ? { ...m, uploadProgress: percentCompleted } : m
                 )
               }
             }));
           }
         });
-        
+
         const fileData = uploadRes.data;
 
         const msgRes = await api.post('/messages', {
@@ -281,7 +283,7 @@ const useStore = create((set, get) => ({
           messageType: tempMessage.messageType || 'text',
           audioDuration: tempMessage.audioDuration || 0
         });
-        
+
         data = msgRes.data;
       } else {
         const res = await api.post('/messages', {
@@ -295,7 +297,7 @@ const useStore = create((set, get) => ({
         });
         data = res.data;
       }
-      
+
       // Replace temp message with real message
       set(s => {
         const msgs = s.messages[channelId] || [];
@@ -303,20 +305,20 @@ const useStore = create((set, get) => ({
         return {
           messages: {
             ...s.messages,
-            [channelId]: alreadyExists 
+            [channelId]: alreadyExists
               ? msgs.filter(m => String(m._id) !== String(tempMessage._id))
               : msgs.map(m => String(m._id) === String(tempMessage._id) ? data : m)
           }
         };
       });
-      
+
       import('../utils/socket').then(({ getSocket }) => {
         const socket = getSocket();
         if (!data.threadParent) {
           socket?.emit('message:send', data);
         }
       });
-      
+
     } catch (err) {
       console.error('Send failed:', err);
       // Update status to failed
@@ -337,7 +339,7 @@ const useStore = create((set, get) => ({
       set(s => ({
         messages: { ...s.messages, [channelId]: [] }
       }));
-    } catch {}
+    } catch { }
   },
 
   // Tasks
@@ -404,7 +406,7 @@ const useStore = create((set, get) => ({
 
     const t = { ...s.typing };
     if (!t[channelId]) t[channelId] = {};
-    
+
     const key = `${channelId}_${userId}`;
     if (window._typingTimeouts && window._typingTimeouts[key]) {
       clearTimeout(window._typingTimeouts[key]);
@@ -451,33 +453,33 @@ const useStore = create((set, get) => ({
         }
       });
       set(s => ({ channels: { ...s.channels, ...grouped } }));
-    } catch {}
+    } catch { }
   },
   fetchMessages: async (channelId) => {
     try {
       const { data } = await api.get(`/messages/channel/${channelId}`);
       get().setMessages(channelId, data);
-    } catch {}
+    } catch { }
   },
   fetchTasks: async () => {
     try {
       const { data } = await api.get('/tasks');
       set({ tasks: data });
-    } catch {}
+    } catch { }
   },
   fetchDecisions: async () => {
     try {
       const { data } = await api.get('/decisions');
       set({ decisions: data });
-    } catch {}
+    } catch { }
   },
   fetchUsers: async () => {
     try {
       const { data } = await api.get('/users');
       set({ users: data });
-    } catch {}
+    } catch { }
   },
-  
+
   // Workspace actions
   createWorkspace: async (name) => {
     const { data } = await api.post('/workspaces', { name });

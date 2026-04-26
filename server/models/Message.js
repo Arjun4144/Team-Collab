@@ -28,6 +28,7 @@ const messageSchema = new mongoose.Schema({
     default: []
   },
   reactions: [{ emoji: String, users: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }] }],
+  isDeleted: { type: Boolean, default: false },
   hiddenBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
 }, { timestamps: true });
 
