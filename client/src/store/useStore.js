@@ -567,44 +567,68 @@ const useStore = create((set, get) => ({
   },
   removeMember: async (channelId, userId) => {
     const { data } = await api.delete(`/channels/${channelId}/members/${userId}`);
-    const s = get();
-    if (s.activeWorkspace) {
-      const wsId = s.activeWorkspace._id;
-      set(s2 => ({
-        channels: {
-          ...s2.channels,
-          [wsId]: (s2.channels[wsId] || []).map(c => c._id === channelId ? data : c)
-        },
-        activeChannel: s2.activeChannel?._id === channelId ? data : s2.activeChannel
-      }));
+    // If it's a workspace channel, the 'workspace:userRemoved' socket event handles the state update instantly.
+    // We only manually update here for legacy/non-workspace channels.
+    if (!data.workspaceId) {
+      const s = get();
+      if (s.activeWorkspace) {
+        const wsId = s.activeWorkspace._id;
+        set(s2 => ({
+          channels: {
+            ...s2.channels,
+            [wsId]: (s2.channels[wsId] || []).map(c => c._id === channelId ? data : c)
+          },
+          activeChannel: s2.activeChannel?._id === channelId ? data : s2.activeChannel
+        }));
+      }
     }
   },
   promoteMember: async (channelId, userId) => {
     const { data } = await api.post(`/channels/${channelId}/admins/${userId}`);
-    const s = get();
-    if (s.activeWorkspace) {
-      const wsId = s.activeWorkspace._id;
-      set(s2 => ({
-        channels: {
-          ...s2.channels,
-          [wsId]: (s2.channels[wsId] || []).map(c => c._id === channelId ? data : c)
-        },
-        activeChannel: s2.activeChannel?._id === channelId ? data : s2.activeChannel
-      }));
+    if (!data.workspaceId) {
+      const s = get();
+      if (s.activeWorkspace) {
+        const wsId = s.activeWorkspace._id;
+        set(s2 => ({
+          channels: {
+            ...s2.channels,
+            [wsId]: (s2.channels[wsId] || []).map(c => c._id === channelId ? data : c)
+          },
+          activeChannel: s2.activeChannel?._id === channelId ? data : s2.activeChannel
+        }));
+      }
     }
   },
   demoteMember: async (channelId, userId) => {
     const { data } = await api.delete(`/channels/${channelId}/admins/${userId}`);
+    if (!data.workspaceId) {
+      const s = get();
+      if (s.activeWorkspace) {
+        const wsId = s.activeWorkspace._id;
+        set(s2 => ({
+          channels: {
+            ...s2.channels,
+            [wsId]: (s2.channels[wsId] || []).map(c => c._id === channelId ? data : c)
+          },
+          activeChannel: s2.activeChannel?._id === channelId ? data : s2.activeChannel
+        }));
+      }
+    }
+  },
+  leaveWorkspace: async (workspaceId) => {
+    await api.delete(`/workspaces/${workspaceId}/leave`);
     const s = get();
-    if (s.activeWorkspace) {
-      const wsId = s.activeWorkspace._id;
-      set(s2 => ({
-        channels: {
-          ...s2.channels,
-          [wsId]: (s2.channels[wsId] || []).map(c => c._id === channelId ? data : c)
-        },
-        activeChannel: s2.activeChannel?._id === channelId ? data : s2.activeChannel
-      }));
+    set(s2 => ({
+      workspaces: s2.workspaces.filter(ws => ws._id !== workspaceId)
+    }));
+    
+    if (s.activeWorkspace?._id === workspaceId) {
+      const remaining = get().workspaces;
+      if (remaining.length > 0) {
+        get().selectWorkspace(remaining[0]);
+      } else {
+        set({ activeWorkspace: null, activeChannel: null });
+      }
     }
   }
 }));

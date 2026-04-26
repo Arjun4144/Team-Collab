@@ -2,22 +2,40 @@ import React from 'react';
 import useStore from '../../store/useStore';
 import { getInitials, statusConfig } from '../../utils/helpers';
 
-export default function MembersPanel() {
-  const { activeChannel, users, user: currentUser, removeMember, promoteMember, demoteMember } = useStore();
+export default function MembersPanel({ type = 'workspace' }) {
+  const { activeWorkspace, activeChannel, users, user: currentUser, removeMember, promoteMember, demoteMember } = useStore();
 
-  const isCurrentUserAdmin = activeChannel?.admins?.includes(currentUser?._id);
+  const currentUserId = currentUser?._id;
+  const creatorId = typeof activeWorkspace?.createdBy === 'object' ? activeWorkspace?.createdBy?._id : activeWorkspace?.createdBy;
+  const isCurrentUserOwner = creatorId?.toString() === currentUserId?.toString();
+  const isCurrentUserAdmin = isCurrentUserOwner || activeWorkspace?.admins?.some(a => (a._id || a) === currentUserId) || activeChannel?.admins?.some(a => (a._id || a) === currentUserId);
 
   // Build a userId→status lookup from the live `users` store (kept fresh by socket events)
   const statusMap = new Map(users.map(u => [u._id, u.status]));
 
-  const memberList = activeChannel?.members || [];
+  const memberList = type === 'all' ? users : (activeWorkspace?.members || activeChannel?.members || []);
 
   // Enrich each member with live status from the store
-  const members = memberList.map(u => ({
-    ...u,
-    status: statusMap.get(u._id) || u.status || 'offline',
-    isAdmin: activeChannel?.admins?.includes(u._id)
-  }));
+  const members = memberList.map(u => {
+    const isOwner = creatorId?.toString() === u._id?.toString();
+    const isAdmin = isOwner || activeWorkspace?.admins?.some(a => (a._id || a) === u._id) || activeChannel?.admins?.some(a => (a._id || a) === u._id);
+    const canAct = (() => {
+      if (type === 'all') return false;
+      if (u._id === currentUserId) return false;
+      if (isOwner) return false;
+      if (isCurrentUserOwner) return true;
+      if (isCurrentUserAdmin && !isAdmin) return true;
+      return false;
+    })();
+
+    return {
+      ...u,
+      status: statusMap.get(u._id) || u.status || 'offline',
+      isOwner,
+      isAdmin,
+      canAct
+    };
+  });
 
   const grouped = {
     online:  members.filter(u => u.status === 'online'),
@@ -37,9 +55,9 @@ export default function MembersPanel() {
           </div>
           <div style={styles.info}>
             <div style={styles.name}>{u.name}</div>
-            <div style={styles.role}>{u.isAdmin ? 'Admin' : 'Member'} · {u.email}</div>
+            <div style={styles.role}>{type === 'all' ? u.email : `${u.isOwner ? 'Owner' : (u.isAdmin ? 'Admin' : 'Member')} · ${u.email}`}</div>
           </div>
-          {isCurrentUserAdmin && u._id !== currentUser?._id && (
+          {u.canAct && (
             <div style={styles.actions}>
               {u.isAdmin ? (
                 <button onClick={() => demoteMember(activeChannel._id, u._id)} title="Demote to Member" style={styles.actionBtn}>↓</button>
@@ -57,7 +75,7 @@ export default function MembersPanel() {
   return (
     <div style={styles.panel}>
       <div style={styles.header}>
-        <span style={styles.title}>👥 Members</span>
+        <span style={styles.title}>{type === 'all' ? '👥 All Users' : '👥 Workspace Members'}</span>
         <span style={styles.count}>{members.length} total</span>
       </div>
       <div style={styles.list}>

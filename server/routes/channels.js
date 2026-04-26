@@ -223,55 +223,208 @@ router.delete('/:id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// REMOVE member — channel admin only
+// REMOVE member — channel admin or workspace admin
 router.delete('/:id/members/:userId', auth, async (req, res) => {
   try {
     const channel = await Channel.findById(req.params.id);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
-    if (!isChannelAdmin(channel, req.user._id)) return res.status(403).json({ error: 'Only channel admins can remove members' });
+    
+    // Authorization: channel admin or workspace admin
+    let isAuthorized = isChannelAdmin(channel, req.user._id);
+    if (!isAuthorized && channel.workspaceId) {
+      const workspace = await Workspace.findById(channel.workspaceId);
+      isAuthorized = workspace && workspace.admins.some(a => a.toString() === req.user._id.toString());
+    }
+    if (!isAuthorized) return res.status(403).json({ error: 'Only admins can remove members' });
     
     // Cannot remove yourself this way (admins should delete or demote first, or leave route)
     if (req.user._id.toString() === req.params.userId) {
       return res.status(400).json({ error: 'Cannot kick yourself. Use the leave functionality.' });
     }
 
-    channel.members = channel.members.filter(m => m.toString() !== req.params.userId);
-    channel.admins = channel.admins.filter(a => a.toString() !== req.params.userId);
-    await channel.save();
+    const targetUserId = req.params.userId;
+
+    if (channel.workspaceId) {
+      // 1. Remove from workspace
+      const workspace = await Workspace.findById(channel.workspaceId);
+      if (workspace) {
+        const isTargetOwner = workspace.createdBy.toString() === targetUserId;
+        if (isTargetOwner) return res.status(403).json({ error: 'Cannot remove the workspace owner.' });
+
+        const isReqOwner = workspace.createdBy.toString() === req.user._id.toString();
+        const isTargetAdmin = workspace.admins.some(a => a.toString() === targetUserId);
+
+        if (isTargetAdmin && !isReqOwner) {
+          return res.status(403).json({ error: 'Only the workspace owner can remove other admins.' });
+        }
+
+        workspace.members = workspace.members.filter(m => m.toString() !== targetUserId);
+        workspace.admins = workspace.admins.filter(a => a.toString() !== targetUserId);
+        await workspace.save();
+
+        // 2. Remove from ALL channels in this workspace
+        await Channel.updateMany(
+          { workspaceId: workspace._id },
+          { 
+            $pull: { members: targetUserId, admins: targetUserId } 
+          }
+        );
+
+        await workspace.populate('members', 'name email avatar status');
+
+        // 3. Emit real-time sync event
+        const io = req.app.get('io');
+        const onlineUsers = req.app.get('onlineUsers');
+        if (io && onlineUsers) {
+          const payload = {
+            workspaceId: workspace._id,
+            userId: targetUserId,
+            updatedMembers: workspace.members
+          };
+          
+          // Tell everyone in the workspace that this user was removed
+          workspace.members.forEach(member => {
+            const socketId = onlineUsers.get(member._id.toString());
+            if (socketId) io.to(socketId).emit('workspace:userRemoved', payload);
+          });
+          // Also explicitly tell the removed user if they are online
+          const removedSocketId = onlineUsers.get(targetUserId);
+          if (removedSocketId) {
+            io.to(removedSocketId).emit('workspace:userRemoved', payload);
+          }
+        }
+      }
+    } else {
+      // For non-workspace channels, just remove from channel
+      channel.members = channel.members.filter(m => m.toString() !== targetUserId);
+      channel.admins = channel.admins.filter(a => a.toString() !== targetUserId);
+      await channel.save();
+    }
+
     await channel.populate('members', 'name email avatar status');
     res.json(channel);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// PROMOTE member to admin — channel admin only
+// PROMOTE member to admin — channel admin or workspace admin
 router.post('/:id/admins/:userId', auth, async (req, res) => {
   try {
     const channel = await Channel.findById(req.params.id);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
-    if (!isChannelAdmin(channel, req.user._id)) return res.status(403).json({ error: 'Only channel admins can promote members' });
     
-    if (!channel.admins.includes(req.params.userId)) {
-      channel.admins.push(req.params.userId);
-      await channel.save();
+    let isAuthorized = isChannelAdmin(channel, req.user._id);
+    if (!isAuthorized && channel.workspaceId) {
+      const workspace = await Workspace.findById(channel.workspaceId);
+      isAuthorized = workspace && workspace.admins.some(a => a.toString() === req.user._id.toString());
     }
+    if (!isAuthorized) return res.status(403).json({ error: 'Only admins can promote members' });
+    
+    const targetUserId = req.params.userId;
+
+    if (channel.workspaceId) {
+      const workspace = await Workspace.findById(channel.workspaceId);
+      if (workspace && !workspace.admins.includes(targetUserId)) {
+        workspace.admins.push(targetUserId);
+        await workspace.save();
+
+        await Channel.updateMany(
+          { workspaceId: workspace._id },
+          { $addToSet: { admins: targetUserId } }
+        );
+
+        await workspace.populate('members', 'name email avatar status');
+
+        const io = req.app.get('io');
+        const onlineUsers = req.app.get('onlineUsers');
+        if (io && onlineUsers) {
+          const payload = {
+            workspaceId: workspace._id,
+            userId: targetUserId,
+            newRole: 'Admin',
+            updatedMembers: workspace.members
+          };
+          workspace.members.forEach(member => {
+            const socketId = onlineUsers.get(member._id.toString());
+            if (socketId) io.to(socketId).emit('workspace:userRoleUpdated', payload);
+          });
+        }
+      }
+    } else {
+      if (!channel.admins.includes(targetUserId)) {
+        channel.admins.push(targetUserId);
+        await channel.save();
+      }
+    }
+
     await channel.populate('members', 'name email avatar status');
     res.json(channel);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DEMOTE admin to member — channel admin only
+// DEMOTE admin to member — channel admin or workspace admin
 router.delete('/:id/admins/:userId', auth, async (req, res) => {
   try {
     const channel = await Channel.findById(req.params.id);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
-    if (!isChannelAdmin(channel, req.user._id)) return res.status(403).json({ error: 'Only channel admins can demote members' });
+
+    let isAuthorized = isChannelAdmin(channel, req.user._id);
+    if (!isAuthorized && channel.workspaceId) {
+      const workspace = await Workspace.findById(channel.workspaceId);
+      isAuthorized = workspace && workspace.admins.some(a => a.toString() === req.user._id.toString());
+    }
+    if (!isAuthorized) return res.status(403).json({ error: 'Only admins can demote members' });
     
-    if (channel.admins.length <= 1 && channel.admins.includes(req.params.userId)) {
-      return res.status(400).json({ error: 'Cannot demote the last admin of the channel.' });
+    const targetUserId = req.params.userId;
+
+    if (channel.workspaceId) {
+      const workspace = await Workspace.findById(channel.workspaceId);
+      if (workspace) {
+        const isTargetOwner = workspace.createdBy.toString() === targetUserId;
+        if (isTargetOwner) return res.status(403).json({ error: 'Cannot demote the workspace owner.' });
+
+        const isReqOwner = workspace.createdBy.toString() === req.user._id.toString();
+        const isTargetAdmin = workspace.admins.some(a => a.toString() === targetUserId);
+
+        if (isTargetAdmin && !isReqOwner) {
+          return res.status(403).json({ error: 'Only the workspace owner can demote admins.' });
+        }
+
+        if (workspace.admins.length <= 1 && workspace.admins.includes(targetUserId)) {
+          return res.status(400).json({ error: 'Cannot demote the last admin of the workspace.' });
+        }
+        workspace.admins = workspace.admins.filter(a => a.toString() !== targetUserId);
+        await workspace.save();
+
+        await Channel.updateMany(
+          { workspaceId: workspace._id },
+          { $pull: { admins: targetUserId } }
+        );
+
+        await workspace.populate('members', 'name email avatar status');
+
+        const io = req.app.get('io');
+        const onlineUsers = req.app.get('onlineUsers');
+        if (io && onlineUsers) {
+          const payload = {
+            workspaceId: workspace._id,
+            userId: targetUserId,
+            newRole: 'Member',
+            updatedMembers: workspace.members
+          };
+          workspace.members.forEach(member => {
+            const socketId = onlineUsers.get(member._id.toString());
+            if (socketId) io.to(socketId).emit('workspace:userRoleUpdated', payload);
+          });
+        }
+      }
+    } else {
+      if (channel.admins.length <= 1 && channel.admins.includes(targetUserId)) {
+        return res.status(400).json({ error: 'Cannot demote the last admin of the channel.' });
+      }
+      channel.admins = channel.admins.filter(a => a.toString() !== targetUserId);
+      await channel.save();
     }
 
-    channel.admins = channel.admins.filter(a => a.toString() !== req.params.userId);
-    await channel.save();
     await channel.populate('members', 'name email avatar status');
     res.json(channel);
   } catch (err) { res.status(500).json({ error: err.message }); }

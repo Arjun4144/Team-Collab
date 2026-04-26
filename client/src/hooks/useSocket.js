@@ -155,6 +155,100 @@ export const useSocket = (socket) => {
       }
     };
 
+    const onWorkspaceUserRemoved = ({ workspaceId, userId, updatedMembers }) => {
+      const state = useStore.getState();
+      const currentUserId = state.user?._id;
+      
+      if (currentUserId === userId) {
+        // I was removed
+        useStore.setState(s => ({
+          workspaces: s.workspaces.filter(ws => ws._id !== workspaceId)
+        }));
+        
+        if (state.activeWorkspace?._id === workspaceId) {
+          const remaining = useStore.getState().workspaces;
+          if (remaining.length > 0) {
+            useStore.getState().selectWorkspace(remaining[0]);
+          } else {
+            useStore.setState({ activeWorkspace: null, activeChannel: null });
+          }
+        }
+      } else {
+        // Someone else was removed. Replace members directly from server payload
+        useStore.setState(s => {
+          const updateWs = ws => ws._id === workspaceId ? { ...ws, members: updatedMembers } : ws;
+          return {
+            workspaces: s.workspaces.map(updateWs),
+            activeWorkspace: s.activeWorkspace ? updateWs(s.activeWorkspace) : null
+          };
+        });
+      }
+    };
+
+    const onWorkspaceUserJoined = ({ workspaceId, newUser, updatedMembers }) => {
+      useStore.setState(s => {
+        const updateWs = ws => ws._id === workspaceId ? { ...ws, members: updatedMembers } : ws;
+        const updateCh = ch => ch.workspaceId === workspaceId ? { ...ch, members: updatedMembers } : ch;
+        
+        const newChannelsMap = { ...s.channels };
+        if (newChannelsMap[workspaceId]) {
+          newChannelsMap[workspaceId] = newChannelsMap[workspaceId].map(updateCh);
+        }
+
+        return {
+          workspaces: s.workspaces.map(updateWs),
+          activeWorkspace: s.activeWorkspace ? updateWs(s.activeWorkspace) : null,
+          channels: newChannelsMap,
+          activeChannel: s.activeChannel ? updateCh(s.activeChannel) : null
+        };
+      });
+    };
+
+    const onWorkspaceUserRoleUpdated = ({ workspaceId, userId, newRole, updatedMembers }) => {
+      useStore.setState(s => {
+        const updateWs = ws => {
+          if (ws._id !== workspaceId) return ws;
+          let newAdmins = ws.admins || [];
+          const isAlreadyAdmin = newAdmins.some(a => (a._id || a) === userId);
+          if (newRole === 'Admin' && !isAlreadyAdmin) {
+            newAdmins = [...newAdmins, userId];
+          } else if (newRole === 'Member') {
+            newAdmins = newAdmins.filter(a => (a._id || a) !== userId);
+          }
+          return { ...ws, members: updatedMembers, admins: newAdmins };
+        };
+
+        const updateCh = ch => {
+          if (ch.workspaceId !== workspaceId) return ch;
+          let newAdmins = ch.admins || [];
+          const isAlreadyAdmin = newAdmins.some(a => (a._id || a) === userId);
+          if (newRole === 'Admin' && !isAlreadyAdmin) {
+            newAdmins = [...newAdmins, userId];
+          } else if (newRole === 'Member') {
+            newAdmins = newAdmins.filter(a => (a._id || a) !== userId);
+          }
+          return { ...ch, admins: newAdmins };
+        };
+
+        const updatedWorkspaces = s.workspaces.map(updateWs);
+        const newActiveWorkspace = s.activeWorkspace ? updateWs(s.activeWorkspace) : null;
+        
+        const newChannelsMap = { ...s.channels };
+        if (newChannelsMap[workspaceId]) {
+          newChannelsMap[workspaceId] = newChannelsMap[workspaceId].map(updateCh);
+        }
+        
+        const newActiveChannel = s.activeChannel ? updateCh(s.activeChannel) : null;
+
+        return { 
+          workspaces: updatedWorkspaces, 
+          activeWorkspace: newActiveWorkspace,
+          channels: newChannelsMap,
+          activeChannel: newActiveChannel
+        };
+      });
+    };
+
     const onChannelSummary = ({ channelId, summary, userId }) => {
       const state = useStore.getState();
       const isMe = String(state.user?._id) === String(userId);
@@ -191,6 +285,9 @@ export const useSocket = (socket) => {
     socket.on('channel:summary',  onChannelSummary);
     socket.on('workspace:updated', onWorkspaceUpdated);
     socket.on('workspace:deleted', onWorkspaceDeleted);
+    socket.on('workspace:userRemoved', onWorkspaceUserRemoved);
+    socket.on('workspace:userJoined', onWorkspaceUserJoined);
+    socket.on('workspace:userRoleUpdated', onWorkspaceUserRoleUpdated);
 
     return () => {
       socket.off('connect',          onConnect);
@@ -213,6 +310,9 @@ export const useSocket = (socket) => {
       socket.off('channel:summary',  onChannelSummary);
       socket.off('workspace:updated', onWorkspaceUpdated);
       socket.off('workspace:deleted', onWorkspaceDeleted);
+      socket.off('workspace:userRemoved', onWorkspaceUserRemoved);
+      socket.off('workspace:userJoined', onWorkspaceUserJoined);
+      socket.off('workspace:userRoleUpdated', onWorkspaceUserRoleUpdated);
     };
   }, [socket]);
 };

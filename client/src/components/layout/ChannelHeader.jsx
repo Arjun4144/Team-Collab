@@ -1,53 +1,280 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../../store/useStore';
 import CallButton from '../../video-call/components/CallButton';
 
+// Hook for window width to determine overflow
+function useWindowWidth() {
+  const [width, setWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const handleResize = () => setWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  return width;
+}
+
+// Hook to detect clicks outside the overflow dropdown
+function useOnClickOutside(ref, handler) {
+  useEffect(() => {
+    const listener = (event) => {
+      if (!ref.current || ref.current.contains(event.target)) return;
+      handler(event);
+    };
+    document.addEventListener('mousedown', listener);
+    return () => document.removeEventListener('mousedown', listener);
+  }, [ref, handler]);
+}
+
+const DropdownItem = ({ action, active, onClick }) => {
+  const [isHovered, setIsHovered] = useState(false);
+  return (
+    <button
+      onClick={() => onClick(action.id)}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      style={{
+        ...styles.dropdownBtn,
+        ...(active ? styles.dropdownBtnActive : {}),
+        ...(isHovered && !active ? { background: 'var(--bg-elevated)' } : {})
+      }}
+    >
+      {action.label}
+    </button>
+  );
+};
+
 export default function ChannelHeader() {
   const { activeChannel, activeWorkspace, setRightPanel, rightPanel, users, user } = useStore();
+  const width = useWindowWidth();
+  const [showOverflow, setShowOverflow] = useState(false);
+  const overflowRef = useRef(null);
+
+  useOnClickOutside(overflowRef, () => setShowOverflow(false));
+
+  const [wsMenuOpen, setWsMenuOpen] = useState(false);
+  const wsMenuRef = useRef(null);
+  useOnClickOutside(wsMenuRef, () => setWsMenuOpen(false));
 
   if (!activeChannel) return null;
 
   const statusMap = new Map(users.map(u => [u._id, u.status]));
-  const memberList = activeChannel.members || [];
+  const memberList = activeWorkspace?.members || activeChannel?.members || [];
   const totalMembers = memberList.length;
   const onlineMembers = memberList.filter(u => statusMap.get(u?._id || u) === 'online').length;
 
-  // Check if user is workspace admin
+  const isWsOwner = (activeWorkspace?.createdBy?._id || activeWorkspace?.createdBy)?.toString() === user?._id?.toString();
   const isWsAdmin = activeWorkspace?.admins?.some(a => (typeof a === 'object' ? a._id : a)?.toString() === user?._id?.toString());
-  const isChAdmin = activeChannel.admins?.includes(user?._id);
-  const myRole = (isWsAdmin || isChAdmin) ? 'Admin' : 'Member';
+  const isChAdmin = activeChannel.admins?.some(a => (typeof a === 'object' ? a._id : a)?.toString() === user?._id?.toString());
+  const myRole = isWsOwner ? 'Owner' : ((isWsAdmin || isChAdmin) ? 'Admin' : 'Member');
+
+  const ALL_ACTIONS = [
+    { id: 'tasks', label: '⚡ Tasks' },
+    { id: 'decisions', label: '✅ Decisions' },
+    { id: 'members', label: '👥 Workspace Members' }
+  ];
+
+  let visibleActions = ALL_ACTIONS;
+  let overflowActions = [];
+
+  if (width < 900) {
+    visibleActions = [ALL_ACTIONS[0]]; // Tasks
+    overflowActions = [ALL_ACTIONS[1], ALL_ACTIONS[2]]; // Decisions, Members
+  }
+  if (width < 700) {
+    visibleActions = []; // Only CallButton
+    overflowActions = ALL_ACTIONS;
+  }
+
+  const handleActionClick = (id) => {
+    setRightPanel(id);
+    setShowOverflow(false);
+  };
 
   return (
     <header style={styles.header}>
       <div style={styles.left}>
         <span style={styles.hash}>#</span>
         <span style={styles.name}>{activeChannel.name}</span>
-        {activeWorkspace && <span style={styles.wsBadge}>{activeWorkspace.name}</span>}
+        {activeWorkspace && (
+          <div style={{ position: 'relative' }} ref={wsMenuRef}>
+            <span onClick={() => setWsMenuOpen(!wsMenuOpen)} style={{ ...styles.wsBadge, cursor: 'pointer' }}>
+              {activeWorkspace.name} <span style={{ fontSize: 9, marginLeft: 2 }}>▼</span>
+            </span>
+            {wsMenuOpen && (
+              <div style={styles.wsDropdown}>
+                {!isWsOwner && (
+                  <button onClick={async () => { 
+                    setWsMenuOpen(false); 
+                    if (window.confirm(`Leave workspace "${activeWorkspace.name}"?`)) { 
+                      try {
+                        await useStore.getState().leaveWorkspace(activeWorkspace._id);
+                      } catch {
+                        useStore.getState().showToast('Failed to leave workspace');
+                      }
+                    } 
+                  }} style={{ ...styles.wsDropdownBtn, color: '#ef4444' }}>
+                    👋 Leave Workspace
+                  </button>
+                )}
+                {isWsOwner && (
+                  <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
+                    Owners cannot leave. Delete workspace from sidebar.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         <span style={styles.roleBadge}>{myRole}</span>
-        {activeChannel.description && (<><span style={styles.divider}>|</span><span style={styles.desc}>{activeChannel.description}</span></>)}
       </div>
-      <div style={styles.actions}>
-        <span style={styles.memberCount}>👥 {totalMembers} · <span style={{ color: '#10b981' }}>●</span> {onlineMembers}</span>
+
+      {/* CENTER SECTION (flexible, truncates) */}
+      <div style={styles.center}>
+        {activeChannel.description && (
+          <>
+            <span style={styles.divider}>|</span>
+            <span style={styles.desc}>{activeChannel.description}</span>
+          </>
+        )}
+      </div>
+
+      {/* RIGHT SECTION (fixed, no shrink, actions) */}
+      <div style={styles.right}>
+        {width > 800 && (
+          <span style={styles.memberCount}>
+            👥 {totalMembers} · <span style={{ color: '#10b981' }}>●</span> {onlineMembers}
+          </span>
+        )}
+        
         <CallButton channelId={activeChannel._id} />
-        {[{ id: 'tasks', label: '⚡ Tasks' }, { id: 'decisions', label: '✅ Decisions' }, { id: 'members', label: '👥 Members' }].map(({ id, label }) => (
-          <button key={id} onClick={() => setRightPanel(id)} style={{ ...styles.btn, ...(rightPanel === id ? styles.btnActive : {}) }}>{label}</button>
+
+        {visibleActions.map(({ id, label }) => (
+          <button 
+            key={id} 
+            onClick={() => handleActionClick(id)} 
+            style={{ ...styles.btn, ...(rightPanel === id ? styles.btnActive : {}) }}
+          >
+            {label}
+          </button>
         ))}
+
+        {overflowActions.length > 0 && (
+          <div style={styles.overflowContainer} ref={overflowRef}>
+            <button 
+              onClick={() => setShowOverflow(!showOverflow)} 
+              style={{ ...styles.btn, ...(showOverflow ? styles.btnActive : {}) }}
+            >
+              +{overflowActions.length}
+            </button>
+            {showOverflow && (
+              <div style={styles.dropdown}>
+                {overflowActions.map((action) => (
+                  <DropdownItem 
+                    key={action.id} 
+                    action={action} 
+                    active={rightPanel === action.id} 
+                    onClick={handleActionClick} 
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );
 }
 
 const styles = {
-  header: { height: 'var(--header-height)', padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', flexShrink: 0 },
-  left: { display: 'flex', alignItems: 'center', gap: 8 },
+  header: { 
+    height: 'var(--header-height)', 
+    padding: '0 20px', 
+    display: 'flex', 
+    alignItems: 'center', 
+    justifyContent: 'space-between', 
+    borderBottom: '1px solid var(--border)', 
+    background: 'var(--bg-surface)', 
+    flexShrink: 0,
+    gap: 16
+  },
+  left: { 
+    display: 'flex', 
+    alignItems: 'center', 
+    gap: 8, 
+    flexShrink: 0 
+  },
+  center: {
+    display: 'flex',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0, // CRITICAL: allows flex child to shrink past its content size
+    gap: 8
+  },
+  right: { 
+    display: 'flex', 
+    alignItems: 'center', 
+    gap: 6, 
+    flexShrink: 0 
+  },
   hash: { fontSize: 16, color: 'var(--text-muted)' },
-  name: { fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-display)' },
-  wsBadge: { fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--accent-glow)', border: '1px solid var(--accent)', color: 'var(--accent)', fontWeight: 600, textTransform: 'uppercase' },
-  divider: { color: 'var(--border-strong)', margin: '0 4px' },
-  desc: { fontSize: 13, color: 'var(--text-secondary)', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  actions: { display: 'flex', alignItems: 'center', gap: 6 },
-  memberCount: { fontSize: 12, color: 'var(--text-muted)', marginRight: 8 },
-  btn: { padding: '5px 12px', borderRadius: 6, fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', background: 'none', border: '1px solid var(--border)', cursor: 'pointer', transition: 'all 0.15s' },
+  name: { fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-display)', whiteSpace: 'nowrap' },
+  wsBadge: { fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--accent-glow)', border: '1px solid var(--accent)', color: 'var(--accent)', fontWeight: 600, textTransform: 'uppercase', whiteSpace: 'nowrap' },
+  divider: { color: 'var(--border-strong)', flexShrink: 0 },
+  desc: { 
+    fontSize: 13, 
+    color: 'var(--text-secondary)', 
+    overflow: 'hidden', 
+    textOverflow: 'ellipsis', 
+    whiteSpace: 'nowrap',
+    flex: 1 
+  },
+  memberCount: { fontSize: 12, color: 'var(--text-muted)', marginRight: 8, whiteSpace: 'nowrap' },
+  btn: { 
+    padding: '5px 12px', 
+    borderRadius: 6, 
+    fontSize: 12, 
+    fontWeight: 500, 
+    color: 'var(--text-secondary)', 
+    background: 'none', 
+    border: '1px solid var(--border)', 
+    cursor: 'pointer', 
+    transition: 'all 0.15s',
+    whiteSpace: 'nowrap'
+  },
   btnActive: { background: 'var(--accent-glow)', color: 'var(--accent)', borderColor: 'var(--accent)' },
-  roleBadge: { fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-secondary)', marginLeft: 4, fontWeight: 600, textTransform: 'uppercase' }
+  roleBadge: { fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-secondary)', marginLeft: 4, fontWeight: 600, textTransform: 'uppercase', whiteSpace: 'nowrap' },
+  overflowContainer: { position: 'relative' },
+  dropdown: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    marginTop: 8,
+    background: 'var(--bg-surface)',
+    border: '1px solid var(--border)',
+    borderRadius: 8,
+    padding: 6,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    minWidth: 150,
+    boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+    zIndex: 100
+  },
+  dropdownBtn: {
+    padding: '8px 12px',
+    borderRadius: 4,
+    fontSize: 13,
+    fontWeight: 500,
+    color: 'var(--text-primary)',
+    background: 'transparent',
+    border: 'none',
+    textAlign: 'left',
+    cursor: 'pointer',
+    transition: 'background 0.2s',
+    whiteSpace: 'nowrap'
+  },
+  dropdownBtnActive: {
+    background: 'var(--bg-elevated)',
+    color: 'var(--accent)'
+  }
 };

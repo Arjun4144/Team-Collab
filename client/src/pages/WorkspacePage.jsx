@@ -151,7 +151,7 @@ export default function WorkspacePage() {
         </div>
       </div>
 
-      {(activeChannel && rightPanel) && (
+      {rightPanel && (
         <div style={styles.rightPanelContainer}>
           <div 
             onMouseDown={startResizePanel} 
@@ -159,9 +159,10 @@ export default function WorkspacePage() {
             onMouseLeave={() => setIsResizerHovered(false)}
             style={{ ...styles.rightResizer, background: (isResizingPanel || isResizerHovered) ? 'var(--accent)' : 'transparent', opacity: (isResizingPanel || isResizerHovered) ? 1 : 0 }} 
           />
-          {rightPanel === 'tasks' && <TasksPanel />}
-          {rightPanel === 'decisions' && <DecisionsPanel />}
-          {rightPanel === 'members' && <MembersPanel />}
+          {rightPanel === 'tasks' && activeChannel && <TasksPanel />}
+          {rightPanel === 'decisions' && activeChannel && <DecisionsPanel />}
+          {rightPanel === 'members' && activeChannel && <MembersPanel type="workspace" />}
+          {rightPanel === 'all_users' && <MembersPanel type="all" />}
         </div>
       )}
 

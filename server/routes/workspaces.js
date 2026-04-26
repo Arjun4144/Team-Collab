@@ -187,7 +187,71 @@ router.post('/join/:inviteCode', auth, async (req, res) => {
     );
     
     await workspace.populate('members', 'name email avatar status');
+
+    const io = req.app.get('io');
+    const onlineUsers = req.app.get('onlineUsers');
+    if (io && onlineUsers) {
+      const payload = {
+        workspaceId: workspace._id,
+        newUser: req.user,
+        updatedMembers: workspace.members
+      };
+      workspace.members.forEach(member => {
+        if (member._id.toString() !== req.user._id.toString()) {
+          const socketId = onlineUsers.get(member._id.toString());
+          if (socketId) io.to(socketId).emit('workspace:userJoined', payload);
+        }
+      });
+    }
+
     res.json({ workspace, alreadyMember: false });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// LEAVE workspace
+router.delete('/:id/leave', auth, async (req, res) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id);
+    if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+
+    const targetUserId = req.user._id.toString();
+
+    if (workspace.createdBy.toString() === targetUserId) {
+      return res.status(403).json({ error: 'Owner cannot leave the workspace. You must delete it instead.' });
+    }
+
+    workspace.members = workspace.members.filter(m => m.toString() !== targetUserId);
+    workspace.admins = workspace.admins.filter(a => a.toString() !== targetUserId);
+    await workspace.save();
+
+    await Channel.updateMany(
+      { workspaceId: workspace._id },
+      { $pull: { members: targetUserId, admins: targetUserId } }
+    );
+
+    await workspace.populate('members', 'name email avatar status');
+
+    const io = req.app.get('io');
+    const onlineUsers = req.app.get('onlineUsers');
+    if (io && onlineUsers) {
+      const payload = {
+        workspaceId: workspace._id,
+        userId: targetUserId,
+        updatedMembers: workspace.members
+      };
+      
+      workspace.members.forEach(member => {
+        const socketId = onlineUsers.get(member._id.toString());
+        if (socketId) io.to(socketId).emit('workspace:userRemoved', payload);
+      });
+      
+      const leavingSocketId = onlineUsers.get(targetUserId);
+      if (leavingSocketId) {
+        io.to(leavingSocketId).emit('workspace:userRemoved', payload);
+      }
+    }
+
+    res.json({ success: true, message: 'Left workspace successfully' });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
