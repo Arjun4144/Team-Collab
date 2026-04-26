@@ -30,6 +30,7 @@ export default function useWebRTC(channelId, inCall) {
   const [remoteStreams, setRemoteStreams] = useState({});
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isMicOn, setIsMicOn] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [remoteStreamVersion, setRemoteStreamVersion] = useState(0);
 
   const peerConnections = useRef({});
@@ -37,11 +38,14 @@ export default function useWebRTC(channelId, inCall) {
   const makingOffer = useRef({});
   const videoTrackRef = useRef(null);
   const audioTrackRef = useRef(null);
+  const screenTrackRef = useRef(null);
+  const previousVideoTrackRef = useRef(null);
   const localMediaStream = useRef(new MediaStream());
   const inCallRef = useRef(inCall);
   const channelIdRef = useRef(channelId);
   const isCameraOnRef = useRef(false);
   const isMicOnRef = useRef(false);
+  const isScreenSharingRef = useRef(false);
 
   inCallRef.current = inCall;
   channelIdRef.current = channelId;
@@ -57,11 +61,12 @@ export default function useWebRTC(channelId, inCall) {
   const broadcastMediaState = useCallback(() => {
     const socket = getSocket();
     if (!socket) return;
-    D('broadcastMediaState: camera=', isCameraOnRef.current, 'mic=', isMicOnRef.current);
+    D('broadcastMediaState: camera=', isCameraOnRef.current, 'mic=', isMicOnRef.current, 'screen=', isScreenSharingRef.current);
     socket.emit('call:media-state', {
       channelId: channelIdRef.current,
-      isCameraOn: isCameraOnRef.current,
+      isCameraOn: isCameraOnRef.current || isScreenSharingRef.current,
       isMicOn: isMicOnRef.current,
+      isScreenSharing: isScreenSharingRef.current,
     });
   }, []);
 
@@ -210,6 +215,18 @@ export default function useWebRTC(channelId, inCall) {
           ERR('  replaceTrack error:', err);
           try { pc.addTrack(track, localMediaStream.current); } catch {}
         });
+
+        // Ensure the transceiver allows sending so that negotiation is triggered if needed
+        const transceiver = pc.getTransceivers().find(t => t.sender === sender);
+        if (transceiver) {
+          if (transceiver.direction === 'recvonly') {
+            D('  → Changing transceiver direction to sendrecv');
+            transceiver.direction = 'sendrecv';
+          } else if (transceiver.direction === 'inactive') {
+            D('  → Changing transceiver direction to sendonly');
+            transceiver.direction = 'sendonly';
+          }
+        }
       } else {
         D(`  → addTrack (new sender — will trigger onnegotiationneeded)`);
         pc.addTrack(track, localMediaStream.current);
@@ -257,6 +274,92 @@ export default function useWebRTC(channelId, inCall) {
     refreshLocalStream();
     broadcastMediaState();
     dumpPeerState('After toggleCamera', peerConnections);
+  }, [syncTrackToAllPeers, refreshLocalStream, broadcastMediaState]);
+
+  // ── Toggle Screen Share ──────────────────────────────────────
+
+  const toggleScreenShare = useCallback(async () => {
+    D(`toggleScreenShare called | current isScreenSharing=${isScreenSharingRef.current}`);
+
+    if (!isScreenSharingRef.current) {
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = stream.getVideoTracks()[0];
+        
+        screenTrack.onended = () => {
+          D('Screen share ended by browser');
+          isScreenSharingRef.current = false;
+          setIsScreenSharing(false);
+          
+          if (screenTrackRef.current) {
+            localMediaStream.current.removeTrack(screenTrackRef.current);
+            screenTrackRef.current = null;
+          }
+          
+          const trackToRestore = previousVideoTrackRef.current || videoTrackRef.current;
+          if (trackToRestore) {
+            localMediaStream.current.addTrack(trackToRestore);
+            syncTrackToAllPeers(trackToRestore);
+          } else {
+            const pcs = Object.values(peerConnections.current);
+            pcs.forEach(pc => {
+              const senders = pc.getSenders();
+              const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+              if (videoSender) pc.removeTrack(videoSender);
+            });
+          }
+          previousVideoTrackRef.current = null;
+          refreshLocalStream();
+          broadcastMediaState();
+        };
+
+        screenTrackRef.current = screenTrack;
+        
+        // Remove current camera track from local stream temporarily
+        if (videoTrackRef.current && localMediaStream.current.getVideoTracks().includes(videoTrackRef.current)) {
+          previousVideoTrackRef.current = videoTrackRef.current;
+          localMediaStream.current.removeTrack(videoTrackRef.current);
+        } else {
+          previousVideoTrackRef.current = null;
+        }
+
+        localMediaStream.current.addTrack(screenTrack);
+        syncTrackToAllPeers(screenTrack);
+        
+        isScreenSharingRef.current = true;
+        setIsScreenSharing(true);
+        refreshLocalStream();
+        broadcastMediaState();
+      } catch (err) {
+        ERR('Screen share error:', err);
+      }
+    } else {
+      D('Stopping screen share manually');
+      isScreenSharingRef.current = false;
+      setIsScreenSharing(false);
+      
+      if (screenTrackRef.current) {
+        screenTrackRef.current.stop();
+        localMediaStream.current.removeTrack(screenTrackRef.current);
+        screenTrackRef.current = null;
+      }
+      
+      const trackToRestore = previousVideoTrackRef.current || videoTrackRef.current;
+      if (trackToRestore) {
+        localMediaStream.current.addTrack(trackToRestore);
+        syncTrackToAllPeers(trackToRestore);
+      } else {
+        const pcs = Object.values(peerConnections.current);
+        pcs.forEach(pc => {
+          const senders = pc.getSenders();
+          const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+          if (videoSender) pc.removeTrack(videoSender);
+        });
+      }
+      previousVideoTrackRef.current = null;
+      refreshLocalStream();
+      broadcastMediaState();
+    }
   }, [syncTrackToAllPeers, refreshLocalStream, broadcastMediaState]);
 
   // ── Toggle Mic ───────────────────────────────────────────────
@@ -482,13 +585,16 @@ export default function useWebRTC(channelId, inCall) {
     makingOffer.current = {};
     if (videoTrackRef.current) { videoTrackRef.current.stop(); videoTrackRef.current = null; }
     if (audioTrackRef.current) { audioTrackRef.current.stop(); audioTrackRef.current = null; }
+    if (screenTrackRef.current) { screenTrackRef.current.stop(); screenTrackRef.current = null; }
     localMediaStream.current = new MediaStream();
     setLocalStream(null);
     setRemoteStreams({});
     setIsCameraOn(false);
     setIsMicOn(false);
+    setIsScreenSharing(false);
     isCameraOnRef.current = false;
     isMicOnRef.current = false;
+    isScreenSharingRef.current = false;
   }, []);
 
   return {
@@ -497,8 +603,10 @@ export default function useWebRTC(channelId, inCall) {
     remoteStreamVersion,
     isCameraOn,
     isMicOn,
+    isScreenSharing,
     toggleCamera,
     toggleMic,
+    toggleScreenShare,
     cleanup,
   };
 }

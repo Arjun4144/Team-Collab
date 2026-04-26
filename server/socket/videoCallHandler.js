@@ -45,6 +45,14 @@ function initVideoCallSocket(io) {
         startedBy: session.startedBy
       });
 
+      // Notify other call participants that someone new joined
+      socket.to(`call:${channelId}`).emit('call:user-joined', {
+        channelId,
+        socketId: socket.id,
+        userId,
+        userName
+      });
+
       // Send existing participants list to the joiner
       socket.emit('call:participants', {
         channelId,
@@ -173,13 +181,14 @@ function initVideoCallSocket(io) {
     });
 
     // ── Media state broadcast ──────────────────────────────────
-    socket.on('call:media-state', ({ channelId, isCameraOn, isMicOn }) => {
+    socket.on('call:media-state', ({ channelId, isCameraOn, isMicOn, isScreenSharing }) => {
       if (!channelId) return;
       // Relay to all call participants (including sender for confirmation)
       io.to(`call:${channelId}`).emit('call:media-state', {
         userId,
         isCameraOn,
-        isMicOn
+        isMicOn,
+        isScreenSharing
       });
     });
 

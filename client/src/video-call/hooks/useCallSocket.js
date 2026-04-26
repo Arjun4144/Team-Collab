@@ -54,8 +54,8 @@ export default function useCallSocket(channelId) {
       console.warn('[VideoCall] Error:', data.message);
     };
 
-    const onMediaState = ({ userId, isCameraOn, isMicOn }) => {
-      setPeerMediaStates(prev => ({ ...prev, [userId]: { isCameraOn, isMicOn } }));
+    const onMediaState = ({ userId, isCameraOn, isMicOn, isScreenSharing }) => {
+      setPeerMediaStates(prev => ({ ...prev, [userId]: { isCameraOn, isMicOn, isScreenSharing } }));
     };
 
     socket.on('call:active', onCallActive);

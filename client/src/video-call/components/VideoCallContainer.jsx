@@ -13,6 +13,7 @@ import useStore from '../../store/useStore';
 export default function VideoCallContainer({ channelId, onClose, mode, callSocketData }) {
   const user = useStore(s => s.user);
   const [chatOpen, setChatOpen] = useState(true);
+  const [viewMode, setViewMode] = useState('gallery');
 
   const {
     chatMessages,
@@ -29,8 +30,10 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
     remoteStreamVersion,
     isCameraOn,
     isMicOn,
+    isScreenSharing,
     toggleCamera,
     toggleMic,
+    toggleScreenShare,
     cleanup,
   } = useWebRTC(channelId, true);
 
@@ -54,6 +57,10 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
     cleanup();
     if (onClose) onClose();
   }, [leaveCall, cleanup, onClose]);
+
+  const toggleViewMode = useCallback(() => {
+    setViewMode(prev => prev === 'gallery' ? 'speaker' : 'gallery');
+  }, []);
 
   const participantCount = 1 + Object.keys(remoteStreams).length;
 
@@ -87,7 +94,10 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
             remoteStreamVersion={remoteStreamVersion}
             userName={user?.name || 'You'}
             isCameraOn={isCameraOn}
+            isMicOn={isMicOn}
+            isScreenSharing={isScreenSharing}
             peerMediaStates={peerMediaStates}
+            viewMode={viewMode}
           />
 
           {chatOpen && (
@@ -103,8 +113,12 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
         <Controls
           isCameraOn={isCameraOn}
           isMicOn={isMicOn}
+          isScreenSharing={isScreenSharing}
+          viewMode={viewMode}
           onToggleCamera={toggleCamera}
           onToggleMic={toggleMic}
+          onToggleScreenShare={toggleScreenShare}
+          onToggleView={toggleViewMode}
           onLeave={handleLeave}
         />
       </div>
@@ -124,9 +138,10 @@ const styles = {
   container: {
     width: '95vw', height: '92vh', maxWidth: 1400,
     display: 'flex', flexDirection: 'column',
-    background: '#0d0d14', borderRadius: 16, overflow: 'hidden',
-    border: '1px solid rgba(255,255,255,0.06)',
-    boxShadow: '0 24px 80px rgba(0,0,0,0.6), 0 0 40px rgba(14,165,233,0.08)',
+    background: '#0a0a0f', borderRadius: 20, overflow: 'hidden',
+    border: '1px solid rgba(14, 165, 233, 0.15)',
+    boxShadow: '0 30px 100px rgba(0,0,0,0.8), 0 0 60px rgba(14,165,233,0.1)',
+    position: 'relative',
   },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
