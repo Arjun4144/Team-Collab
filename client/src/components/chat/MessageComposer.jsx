@@ -386,7 +386,7 @@ export default function MessageComposer({ onSent, onSummarize }) {
               </button>
               {onSummarize && (
                 <button type="button" onClick={onSummarize} style={styles.summarizeBtn} title="Summarize conversation">
-                  ⚡
+                  ✨
                 </button>
               )}
               <input type="file" ref={fileInputRef} onChange={handleFileChange} style={{ display: 'none' }} accept="image/*,.pdf,.doc,.docx,.txt,audio/*" />

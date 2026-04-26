@@ -159,7 +159,8 @@ export default function ChatArea() {
     if (!activeChannelId || loading) return;
     setLoading(true); setError(null);
     try {
-      await api.post(`/messages/channel/${activeChannelId}/summarize`);
+      const { data } = await api.post(`/messages/channel/${activeChannelId}/summarize`);
+      useStore.getState().setChannelSummary(activeChannelId, data.summary, false);
       setLastSeen(activeChannelId);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to generate summary');

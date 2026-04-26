@@ -363,16 +363,6 @@ router.post('/channel/:channelId/summarize', auth, async (req, res) => {
     const summary = await generateSummary(formatted);
     const finalSummary = summary || '• No summary available.';
 
-    // Broadcast to other users in the channel
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`channel:${req.params.channelId}`).emit('channel:summary', {
-        channelId: req.params.channelId,
-        summary: finalSummary,
-        userId: req.user._id
-      });
-    }
-
     res.json({ summary: finalSummary, count: validMessages.length });
   } catch (err) {
     console.error('Summarize error:', err?.message || err);

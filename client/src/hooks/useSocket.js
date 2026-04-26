@@ -249,12 +249,6 @@ export const useSocket = (socket) => {
       });
     };
 
-    const onChannelSummary = ({ channelId, summary, userId }) => {
-      const state = useStore.getState();
-      const isMe = String(state.user?._id) === String(userId);
-      state.setChannelSummary(channelId, summary, isMe);
-    };
-
     const onConnect = () => {
       const activeCh = useStore.getState().activeChannel;
       if (activeCh) {
@@ -282,7 +276,6 @@ export const useSocket = (socket) => {
     socket.on('channel:updated',  onChannelUpdated);
     socket.on('channel:created',  onChannelCreated);
     socket.on('channel:deleted',  onChannelDeleted);
-    socket.on('channel:summary',  onChannelSummary);
     socket.on('workspace:updated', onWorkspaceUpdated);
     socket.on('workspace:deleted', onWorkspaceDeleted);
     socket.on('workspace:userRemoved', onWorkspaceUserRemoved);
@@ -307,7 +300,6 @@ export const useSocket = (socket) => {
       socket.off('channel:updated',  onChannelUpdated);
       socket.off('channel:created',  onChannelCreated);
       socket.off('channel:deleted',  onChannelDeleted);
-      socket.off('channel:summary',  onChannelSummary);
       socket.off('workspace:updated', onWorkspaceUpdated);
       socket.off('workspace:deleted', onWorkspaceDeleted);
       socket.off('workspace:userRemoved', onWorkspaceUserRemoved);
