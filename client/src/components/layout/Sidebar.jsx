@@ -3,6 +3,9 @@ import useStore from '../../store/useStore';
 import { getInitials, statusConfig } from '../../utils/helpers';
 import api from '../../utils/api';
 import NotificationBell from './NotificationBell';
+import Avatar from './Avatar';
+import ProfileSettingsModal from './ProfileSettingsModal';
+import UserProfileModal from './UserProfileModal';
 
 const ChannelRow = ({ ch, onRename, onDelete, isWsAdmin }) => {
   const { user, activeChannel, selectChannel, clearChannelMessages, showToast } = useStore();
@@ -176,6 +179,19 @@ export default function Sidebar() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isResizerHovered, setIsResizerHovered] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const profileMenuRef = useRef(null);
+
+  useEffect(() => {
+    const h = (e) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    if (profileMenuOpen) document.addEventListener('click', h);
+    return () => document.removeEventListener('click', h);
+  }, [profileMenuOpen]);
 
   // Search logic
   const [searchQuery, setSearchQuery] = useState('');
@@ -369,11 +385,35 @@ export default function Sidebar() {
       />
 
       <div style={styles.userFooter}>
-        <div style={styles.avatar}>{getInitials(user?.name)}<span style={{ ...styles.statusDot, background: statusColor }} /></div>
-        <div style={{ flex: 1, minWidth: 0 }}><div style={styles.userName}>{user?.name}</div></div>
+        <div 
+          style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, cursor: 'pointer' }}
+          onClick={() => setProfileMenuOpen(!profileMenuOpen)}
+          ref={profileMenuRef}
+        >
+          <div style={{ position: 'relative' }}>
+            <Avatar user={user} />
+            <span style={{ ...styles.statusDot, background: statusColor }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={styles.userName}>{user?.name}</div>
+          </div>
+          
+          {profileMenuOpen && (
+            <div style={{ ...styles.dropdown, bottom: '100%', left: 0, marginBottom: 8 }}>
+              <button onClick={() => setShowProfileSettings(true)} style={styles.dropdownBtn}>⚙️ Profile Settings</button>
+              <div style={styles.dropdownDivider} />
+              <button onClick={logout} style={{ ...styles.dropdownBtn, color: '#ef4444' }}>⎋ Logout</button>
+            </div>
+          )}
+        </div>
+        
         <button onClick={toggleTheme} title="Toggle Theme" style={styles.logoutBtn}>🌓</button>
-        <button onClick={logout} title="Sign out" style={styles.logoutBtn}>⎋</button>
       </div>
+
+      <ProfileSettingsModal 
+        isOpen={showProfileSettings} 
+        onClose={() => setShowProfileSettings(false)} 
+      />
 
       {renameData && (
         <div style={styles.modalOverlay} onClick={() => setRenameData(null)}>
@@ -437,6 +477,7 @@ const styles = {
   unreadDot: { width: 8, height: 8, borderRadius: '50%', background: '#ef4444', flexShrink: 0, marginLeft: 4 },
   actionIconBtn: { background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 4, width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)', cursor: 'pointer', fontSize: 14, fontWeight: 800, lineHeight: 1 },
   dropdown: { position: 'absolute', right: 0, zIndex: 100, background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, padding: 4, minWidth: 160, boxShadow: '0 4px 12px rgba(0,0,0,0.2)' },
+  dropdownDivider: { height: 1, background: 'var(--border)', margin: '4px 0' },
   dropdownBtn: { display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: '8px 12px', fontSize: 13, color: 'var(--text-secondary)', cursor: 'pointer', borderRadius: 4, transition: 'background 0.1s' },
   unreadBadge: { background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 10, flexShrink: 0, lineHeight: 1 },
   chPrefix: { fontSize: 12, color: 'var(--text-muted)', flexShrink: 0 },

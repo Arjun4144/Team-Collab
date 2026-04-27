@@ -5,7 +5,11 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, required: true, unique: true, lowercase: true },
   password: { type: String, required: true },
-  avatar: { type: String, default: '' },
+  avatar: {
+    url: { type: String, default: '' },
+    public_id: { type: String, default: '' }
+  },
+  bio: { type: String, default: '', trim: true },
   role: { type: String, enum: ['admin', 'member', 'guest'], default: 'member' },
   status: { type: String, enum: ['online', 'away', 'busy', 'offline'], default: 'offline' },
   isActive: { type: Boolean, default: true }

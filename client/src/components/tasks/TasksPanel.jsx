@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import useStore from '../../store/useStore';
 import api from '../../utils/api';
 import { formatRelative, priorityConfig, getInitials } from '../../utils/helpers';
+import Avatar from '../layout/Avatar';
 
 const STATUS_COLS = ['todo', 'in_progress', 'done'];
 const STATUS_LABELS = { todo: 'To Do', in_progress: 'In Progress', done: 'Done' };
@@ -221,7 +222,7 @@ export default function TasksPanel() {
                         {task.assignee && (
                           <>
                             <span style={styles.dot}>·</span>
-                            <span style={styles.assigneeChip}>{getInitials(task.assignee.name)}</span>
+                            <Avatar user={task.assignee} size={18} fontSize={8} />
                             <span style={styles.metaText}>{task.assignee.name}</span>
                           </>
                         )}

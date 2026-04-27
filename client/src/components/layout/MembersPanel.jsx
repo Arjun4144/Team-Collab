@@ -1,9 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import useStore from '../../store/useStore';
 import { getInitials, statusConfig } from '../../utils/helpers';
+import Avatar from './Avatar';
+import UserProfileModal from './UserProfileModal';
 
 export default function MembersPanel({ type = 'workspace' }) {
   const { activeWorkspace, activeChannel, users, user: currentUser, removeMember, promoteMember, demoteMember } = useStore();
+  const [selectedUser, setSelectedUser] = useState(null);
 
   const currentUserId = currentUser?._id;
   const creatorId = typeof activeWorkspace?.createdBy === 'object' ? activeWorkspace?.createdBy?._id : activeWorkspace?.createdBy;
@@ -48,9 +51,9 @@ export default function MembersPanel({ type = 'workspace' }) {
     <div style={styles.section}>
       <div style={styles.sectionLabel}>{label} — {list.length}</div>
       {list.map(u => (
-        <div key={u._id} style={styles.member}>
+        <div key={u._id} style={styles.member} onClick={() => setSelectedUser(u)}>
           <div style={styles.avatarWrap}>
-            <div style={styles.avatar}>{getInitials(u.name)}</div>
+            <Avatar user={u} size={32} />
             <span style={{ ...styles.dot, background: statusConfig[u.status || 'offline']?.color }} />
           </div>
           <div style={styles.info}>
@@ -84,6 +87,12 @@ export default function MembersPanel({ type = 'workspace' }) {
         <Section label="Busy"    list={grouped.busy} />
         <Section label="Offline" list={grouped.offline} />
       </div>
+
+      <UserProfileModal 
+        isOpen={!!selectedUser} 
+        onClose={() => setSelectedUser(null)} 
+        user={selectedUser} 
+      />
     </div>
   );
 }
@@ -103,7 +112,7 @@ const styles = {
   list: { flex: 1, overflowY: 'auto', padding: 12 },
   section: { marginBottom: 20 },
   sectionLabel: { fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 },
-  member: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 4px', borderRadius: 6 },
+  member: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 4px', borderRadius: 6, cursor: 'pointer', transition: 'background 0.15s' },
   avatarWrap: { position: 'relative', flexShrink: 0 },
   avatar: {
     width: 32, height: 32, borderRadius: '50%', background: 'var(--bg-elevated)',

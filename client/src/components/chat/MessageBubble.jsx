@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import useStore from '../../store/useStore';
 import api from '../../utils/api';
 import { getInitials, formatTime, intentConfig } from '../../utils/helpers';
+import Avatar from '../layout/Avatar';
+import UserProfileModal from '../layout/UserProfileModal';
 
 // Global: only one audio plays at a time
 let globalPlayingAudio = null;
@@ -181,6 +183,7 @@ export default function MessageBubble({ message, onReply }) {
   const [verdict, setVerdict] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
   const [dropdownPos, setDropdownPos] = useState({ top: 'auto', bottom: 'auto', left: 'auto', right: 'auto' });
+  const [showProfile, setShowProfile] = useState(false);
   const dropdownRef = useRef(null);
   const triggerRef = useRef(null);
 
@@ -275,8 +278,8 @@ export default function MessageBubble({ message, onReply }) {
     >
       {/* Avatar — only for others */}
       {!isOwn && (
-        <div style={styles.avatarWrap}>
-          <div style={styles.avatar}>{getInitials(message.sender?.name)}</div>
+        <div style={styles.avatarWrap} onClick={() => setShowProfile(true)}>
+          <Avatar user={message.sender} size={30} style={{ cursor: 'pointer' }} />
         </div>
       )}
 
@@ -290,7 +293,7 @@ export default function MessageBubble({ message, onReply }) {
       }}>
         {/* Sender name — only for others */}
         {!isOwn && (
-          <div style={styles.senderName}>{message.sender?.name || 'Unknown'}</div>
+          <div style={styles.senderName} onClick={() => setShowProfile(true)}>{message.sender?.name || 'Unknown'}</div>
         )}
 
         {/* Meta row for intent/resolved badges (only render if there's something to show) */}
@@ -481,6 +484,12 @@ export default function MessageBubble({ message, onReply }) {
           </div>
         </div>
       </div>
+
+      <UserProfileModal 
+        isOpen={showProfile} 
+        onClose={() => setShowProfile(false)} 
+        user={message.sender} 
+      />
     </div>
   );
 }
@@ -510,7 +519,7 @@ const styles = {
     border: '1px solid rgba(128, 128, 128, 0.12)',
   },
   senderName: {
-    fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 2
+    fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 2, cursor: 'pointer'
   },
   meta: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' },
   time: { fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' },

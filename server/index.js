@@ -15,6 +15,7 @@ const tasksRouter = require('./routes/tasks');
 const notificationsRouter = require('./routes/notifications');
 const decisionRoutes = require('./routes/decisions');
 const userRoutes = require('./routes/users');
+const uploadRoutes = require('./routes/upload');
 const { initSocket, onlineUsers } = require('./socket/socketHandler');
 const { initVideoCallSocket } = require('./socket/videoCallHandler');
 
@@ -40,6 +41,7 @@ app.use('/api/tasks', tasksRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/decisions', decisionRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/upload', uploadRoutes);
 
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 
