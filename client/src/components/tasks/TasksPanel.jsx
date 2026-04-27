@@ -3,12 +3,13 @@ import useStore from '../../store/useStore';
 import api from '../../utils/api';
 import { formatRelative, priorityConfig, getInitials } from '../../utils/helpers';
 import Avatar from '../layout/Avatar';
+import ProfileModal from '../layout/ProfileModal';
 
 const STATUS_COLS = ['todo', 'in_progress', 'done'];
 const STATUS_LABELS = { todo: 'To Do', in_progress: 'In Progress', done: 'Done' };
 
 export default function TasksPanel() {
-  const { tasks, updateTask, removeTask, users, activeChannel, activeWorkspace, user, taskDraft, setTaskDraft } = useStore();
+  const { tasks, updateTask, removeTask, users, activeChannel, activeWorkspace, user, taskDraft, setTaskDraft, profileUser, setProfileUser } = useStore();
   const [showNew, setShowNew] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [taskToDelete, setTaskToDelete] = useState(null);
@@ -222,8 +223,10 @@ export default function TasksPanel() {
                         {task.assignee && (
                           <>
                             <span style={styles.dot}>·</span>
-                            <Avatar user={task.assignee} size={18} fontSize={8} />
-                            <span style={styles.metaText}>{task.assignee.name}</span>
+                            <div onClick={() => setProfileUser(task.assignee)} style={{ cursor: 'pointer', display: 'flex' }}>
+                              <Avatar user={task.assignee} size={18} fontSize={8} />
+                            </div>
+                            <span style={{ ...styles.metaText, cursor: 'pointer' }} onClick={() => setProfileUser(task.assignee)}>{task.assignee.name}</span>
                           </>
                         )}
                       </div>
@@ -268,6 +271,7 @@ export default function TasksPanel() {
           </div>
         ))}
       </div>
+
     </div>
   );
 }

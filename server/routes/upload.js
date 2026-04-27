@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { auth } = require('../middleware/auth');
 const multer = require('multer');
 const { uploadToCloudinary, deleteFromCloudinary } = require('../utils/cloudinaryHelper');
 
@@ -24,9 +25,9 @@ const upload = multer({
 /**
  * @route   POST /api/upload/test
  * @desc    Test image upload to Cloudinary
- * @access  Public (for testing purposes)
+ * @access  Private (Admin only)
  */
-router.post('/test', upload.single('image'), async (req, res) => {
+router.post('/test', auth, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'Please upload an image file' });
@@ -42,7 +43,6 @@ router.post('/test', upload.single('image'), async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Upload Error:', error);
     res.status(500).json({
       message: 'Failed to upload image',
       error: error.message,
@@ -53,9 +53,9 @@ router.post('/test', upload.single('image'), async (req, res) => {
 /**
  * @route   POST /api/upload/delete-test
  * @desc    Test image deletion from Cloudinary
- * @access  Public (for testing purposes)
+ * @access  Private (Admin only)
  */
-router.post('/delete-test', async (req, res) => {
+router.post('/delete-test', auth, async (req, res) => {
   const { public_id } = req.body;
   
   if (!public_id) {
@@ -69,7 +69,6 @@ router.post('/delete-test', async (req, res) => {
       result,
     });
   } catch (error) {
-    console.error('Delete Error:', error);
     res.status(500).json({
       message: 'Failed to delete image',
       error: error.message,

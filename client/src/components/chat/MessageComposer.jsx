@@ -57,7 +57,7 @@ export default function MessageComposer({ onSent, onSummarize }) {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
       if (selectedFile.size > 10 * 1024 * 1024) {
-        alert('File size exceeds 10MB limit');
+        useStore.getState().showToast('File size exceeds 10MB limit');
         return;
       }
       setFile(selectedFile);
@@ -370,7 +370,6 @@ export default function MessageComposer({ onSent, onSummarize }) {
                 <div style={styles.avatar}>{getInitials(u.name)}</div>
                 <div>
                   <div style={styles.mentionName}>{u.name}</div>
-                  <div style={styles.mentionRole}>{u.role}</div>
                 </div>
               </li>
             ))}

@@ -6,7 +6,37 @@ const useStore = create((set, get) => ({
   // Auth
   user: null,
   token: localStorage.getItem('nexus_token'),
-  setUser: (user) => set({ user }),
+  setUser: (updatedUser) => {
+    set(s => {
+      const updateList = (list) => list.map(u => u._id === updatedUser._id ? { ...u, ...updatedUser } : u);
+      const updateWs = (ws) => ({
+        ...ws,
+        members: updateList(ws.members || []),
+        admins: Array.isArray(ws.admins) ? ws.admins.map(a => (a._id || a) === updatedUser._id ? updatedUser : a) : ws.admins
+      });
+
+      const updateMessages = (msgsMap) => {
+        const newMap = { ...msgsMap };
+        Object.keys(newMap).forEach(chId => {
+          newMap[chId] = newMap[chId].map(m => 
+            (m.sender?._id === updatedUser._id || m.sender === updatedUser._id)
+              ? { ...m, sender: { ...m.sender, ...updatedUser } }
+              : m
+          );
+        });
+        return newMap;
+      };
+
+      return {
+        user: updatedUser,
+        users: updateList(s.users),
+        workspaceMembers: updateList(s.workspaceMembers),
+        workspaces: s.workspaces.map(updateWs),
+        activeWorkspace: s.activeWorkspace ? updateWs(s.activeWorkspace) : null,
+        messages: updateMessages(s.messages)
+      };
+    });
+  },
   setToken: (token) => {
     localStorage.setItem('nexus_token', token);
     set({ token });
@@ -117,6 +147,8 @@ const useStore = create((set, get) => ({
       if (!targetChannel && wsChannels.length > 0) targetChannel = wsChannels[0];
       if (targetChannel) s.selectChannel(targetChannel);
       else set({ activeChannel: null });
+      // Fetch workspace members for isolation
+      await s.fetchWorkspaceMembers(workspace._id);
     }
   },
 
@@ -374,10 +406,13 @@ const useStore = create((set, get) => ({
   addDecision: (d) => set(s => ({ decisions: [d, ...s.decisions] })),
 
   // Users
-  users: [],
+  users: [], // Shared members across all workspaces
+  workspaceMembers: [], // Members of the currently active workspace
   setUsers: (users) => set({ users }),
+  setWorkspaceMembers: (workspaceMembers) => set({ workspaceMembers }),
   updateUserStatus: (userId, status) => set(s => ({
-    users: s.users.map(u => u._id === userId ? { ...u, status } : u)
+    users: s.users.map(u => u._id === userId ? { ...u, status } : u),
+    workspaceMembers: s.workspaceMembers.map(u => u._id === userId ? { ...u, status } : u)
   })),
 
   // UI
@@ -398,6 +433,10 @@ const useStore = create((set, get) => ({
   setActiveThread: (msg) => set({ activeThread: msg }),
   replyingTo: null,
   setReplyingTo: (msg) => set({ replyingTo: msg }),
+  profileUser: null,
+  setProfileUser: (user) => set({ profileUser: user }),
+  confirmModal: null, // { title, message, onConfirm, confirmText, type: 'danger' | 'primary' }
+  setConfirmModal: (modal) => set({ confirmModal: modal }),
 
   // Summaries
   summaries: {}, // { [channelId]: { text: string, hidden: boolean, activeUser: boolean } }
@@ -494,9 +533,17 @@ const useStore = create((set, get) => ({
   },
   fetchUsers: async () => {
     try {
+      // Note: This is now restricted to admins on backend
       const { data } = await api.get('/users');
       set({ users: data });
     } catch { }
+  },
+  fetchWorkspaceMembers: async (workspaceId) => {
+    try {
+      const { data } = await api.get(`/workspaces/${workspaceId}/members`);
+      set({ workspaceMembers: data });
+      return data;
+    } catch { return []; }
   },
 
   // Workspace actions

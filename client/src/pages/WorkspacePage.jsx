@@ -10,9 +10,15 @@ import ThreadPanel from '../components/chat/ThreadPanel';
 import TasksPanel from '../components/tasks/TasksPanel';
 import DecisionsPanel from '../components/decisions/DecisionsPanel';
 import MembersPanel from '../components/layout/MembersPanel';
+import ProfileModal from '../components/layout/ProfileModal';
+import ConfirmationModal from '../components/layout/ConfirmationModal';
 
 export default function WorkspacePage() {
-  const { token, user, setUser, workspaces, fetchWorkspaces, fetchTasks, fetchDecisions, fetchUsers, rightPanel, activeThread, toast, activeWorkspace, activeChannel, setToast, selectWorkspace, selectChannel } = useStore();
+  const { 
+    token, user, setUser, workspaces, fetchWorkspaces, fetchTasks, fetchDecisions, fetchWorkspaceMembers, fetchUsers, 
+    rightPanel, activeThread, toast, activeWorkspace, activeChannel, setToast, 
+    selectWorkspace, selectChannel, profileUser, setProfileUser, confirmModal
+  } = useStore();
   const [socket, setSocket] = useState(null);
   const [initialized, setInitialized] = useState(false);
   const { workspaceId: urlWorkspaceId, channelId: urlChannelId } = useParams();
@@ -67,30 +73,32 @@ export default function WorkspacePage() {
     fetchDecisions();
     fetchUsers();
 
-    // Fetch current user if needed
     if (!user) {
       import('../utils/api').then(({ default: api }) => {
         api.get('/auth/me').then(r => setUser(r.data.user)).catch(() => {});
       });
     }
 
-    // Fetch workspaces and auto-select
-    fetchWorkspaces().then(workspaces => {
-      if (workspaces && workspaces.length > 0) {
-        // Determine which workspace to open
+    fetchWorkspaces().then(workspacesList => {
+      if (workspacesList && workspacesList.length > 0) {
         let targetWs = null;
         if (urlWorkspaceId) {
-          targetWs = workspaces.find(ws => ws._id === urlWorkspaceId);
+          targetWs = workspacesList.find(ws => ws._id === urlWorkspaceId);
+          if (!targetWs) {
+            console.warn('Unauthorized or invalid workspace access attempt');
+            targetWs = workspacesList[0];
+            navigate(`/workspace/${targetWs._id}`, { replace: true });
+          }
         }
+        
         if (!targetWs) {
           const lastWsId = localStorage.getItem('nexus_last_workspace');
-          if (lastWsId) targetWs = workspaces.find(ws => ws._id === lastWsId);
+          if (lastWsId) targetWs = workspacesList.find(ws => ws._id === lastWsId);
         }
-        if (!targetWs) targetWs = workspaces[0];
+        if (!targetWs) targetWs = workspacesList[0];
         
         if (targetWs) {
           selectWorkspace(targetWs).then(() => {
-            // If URL has a channel ID, select it
             if (urlChannelId) {
               const state = useStore.getState();
               const wsChannels = state.channels[targetWs._id] || [];
@@ -108,7 +116,7 @@ export default function WorkspacePage() {
     });
 
     return () => { s.disconnect(); setSocket(null); };
-  }, [token]);
+  }, [token, urlWorkspaceId]);
 
   // Sync URL when workspace/channel changes
   useEffect(() => {
@@ -211,6 +219,15 @@ export default function WorkspacePage() {
           <span style={styles.toastText}>{toast.message || toast}</span>
         </div>
       )}
+
+      {profileUser && (
+        <ProfileModal 
+          isOpen={true} 
+          onClose={() => setProfileUser(null)} 
+          user={profileUser} 
+        />
+      )}
+      <ConfirmationModal />
     </div>
   );
 }

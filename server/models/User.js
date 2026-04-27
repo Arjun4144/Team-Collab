@@ -10,7 +10,6 @@ const userSchema = new mongoose.Schema({
     public_id: { type: String, default: '' }
   },
   bio: { type: String, default: '', trim: true },
-  role: { type: String, enum: ['admin', 'member', 'guest'], default: 'member' },
   status: { type: String, enum: ['online', 'away', 'busy', 'offline'], default: 'offline' },
   isActive: { type: Boolean, default: true }
 }, { timestamps: true });

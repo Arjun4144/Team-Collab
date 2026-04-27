@@ -22,12 +22,25 @@ const storage = multer.diskStorage({
   }
 });
 
+const ALLOWED_MIME_TYPES = [
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+  'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/webm', 'audio/mp4',
+  'video/mp4', 'video/webm',
+  'application/pdf',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain', 'text/csv'
+];
+
 const upload = multer({ 
   storage, 
   limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
-    // Accept images, documents, and audio files
-    cb(null, true);
+    if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('File type not allowed'), false);
+    }
   }
 });
 
@@ -54,6 +67,15 @@ router.get('/channel/:channelId', auth, async (req, res) => {
 
 router.get('/:id/thread', auth, async (req, res) => {
   try {
+    const parentMsg = await Message.findById(req.params.id);
+    if (!parentMsg) return res.status(404).json({ error: 'Message not found' });
+    
+    const channel = await Channel.findById(parentMsg.channel);
+    if (!channel) return res.status(404).json({ error: 'Channel not found' });
+    
+    const isMember = channel.members.some(m => m.toString() === req.user._id.toString());
+    if (!isMember) return res.status(403).json({ error: 'You are not a member of this channel' });
+
     const replies = await Message.find({ threadParent: req.params.id, hiddenBy: { $ne: req.user._id } })
       .sort({ createdAt: 1 })
       .populate('sender', 'name avatar email status');
@@ -65,8 +87,6 @@ router.post('/', auth, async (req, res) => {
   try {
     let { channel, content, intentType, priority, threadParent, attachments, messageType, audioDuration } = req.body;
     content = content || '';
-    
-    console.log("attachments received:", attachments);
 
     // Verify membership
     const ch = await Channel.findById(channel);

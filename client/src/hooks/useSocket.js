@@ -199,9 +199,15 @@ export const useSocket = (socket) => {
         // Someone else was removed. Replace members directly from server payload
         useStore.setState(s => {
           const updateWs = ws => ws._id === workspaceId ? { ...ws, members: updatedMembers } : ws;
+          // If the removed user is being viewed in the profile modal, close it
+          const newProfileUser = (s.profileUser?._id === userId) ? null : s.profileUser;
+          if (s.activeWorkspace?._id === workspaceId) {
+            setTimeout(() => useStore.getState().fetchWorkspaceMembers(workspaceId), 100);
+          }
           return {
             workspaces: s.workspaces.map(updateWs),
-            activeWorkspace: s.activeWorkspace ? updateWs(s.activeWorkspace) : null
+            activeWorkspace: s.activeWorkspace ? updateWs(s.activeWorkspace) : null,
+            profileUser: newProfileUser
           };
         });
       }
@@ -217,6 +223,10 @@ export const useSocket = (socket) => {
           newChannelsMap[workspaceId] = newChannelsMap[workspaceId].map(updateCh);
         }
 
+        if (s.activeWorkspace?._id === workspaceId) {
+          setTimeout(() => useStore.getState().fetchWorkspaceMembers(workspaceId), 100);
+        }
+        
         return {
           workspaces: s.workspaces.map(updateWs),
           activeWorkspace: s.activeWorkspace ? updateWs(s.activeWorkspace) : null,
@@ -261,6 +271,10 @@ export const useSocket = (socket) => {
         }
         
         const newActiveChannel = s.activeChannel ? updateCh(s.activeChannel) : null;
+
+        if (newActiveWorkspace?._id === workspaceId) {
+          setTimeout(() => useStore.getState().fetchWorkspaceMembers(workspaceId), 100);
+        }
 
         return { 
           workspaces: updatedWorkspaces, 

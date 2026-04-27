@@ -45,15 +45,16 @@ const DropdownItem = ({ action, active, onClick }) => {
 
 export default function ChannelHeader() {
   const { activeChannel, activeWorkspace, setRightPanel, rightPanel, users, user, tasks } = useStore();
+
+  const isWsOwner = (activeWorkspace?.createdBy?._id || activeWorkspace?.createdBy)?.toString() === user?._id?.toString();
+  const isWsAdmin = activeWorkspace?.admins?.some(a => (typeof a === 'object' ? a._id : a)?.toString() === user?._id?.toString());
+  const isChAdmin = activeChannel?.admins?.some(a => (typeof a === 'object' ? a._id : a)?.toString() === user?._id?.toString());
+  const myRole = isWsOwner ? 'Owner' : ((isWsAdmin || isChAdmin) ? 'Admin' : 'Member');
   const width = useWindowWidth();
   const [showOverflow, setShowOverflow] = useState(false);
   const overflowRef = useRef(null);
 
   useOnClickOutside(overflowRef, () => setShowOverflow(false));
-
-  const [wsMenuOpen, setWsMenuOpen] = useState(false);
-  const wsMenuRef = useRef(null);
-  useOnClickOutside(wsMenuRef, () => setWsMenuOpen(false));
 
   const lastSeenTasks = parseInt(localStorage.getItem('nexus_lastSeenTasks') || '0', 10);
 
@@ -70,15 +71,10 @@ export default function ChannelHeader() {
   const totalMembers = memberList.length;
   const onlineMembers = memberList.filter(u => statusMap.get(u?._id || u) === 'online').length;
 
-  const isWsOwner = (activeWorkspace?.createdBy?._id || activeWorkspace?.createdBy)?.toString() === user?._id?.toString();
-  const isWsAdmin = activeWorkspace?.admins?.some(a => (typeof a === 'object' ? a._id : a)?.toString() === user?._id?.toString());
-  const isChAdmin = activeChannel.admins?.some(a => (typeof a === 'object' ? a._id : a)?.toString() === user?._id?.toString());
-  const myRole = isWsOwner ? 'Owner' : ((isWsAdmin || isChAdmin) ? 'Admin' : 'Member');
-
   const ALL_ACTIONS = [
     { id: 'tasks', label: `⚡ Tasks ${unseenTasks > 0 ? `(${unseenTasks})` : ''}` },
     { id: 'decisions', label: '✅ Decisions' },
-    { id: 'members', label: '👥 Workspace Members' }
+    { id: 'members', label: '👥 Members' }
   ];
 
   let visibleActions = ALL_ACTIONS;
@@ -105,51 +101,17 @@ export default function ChannelHeader() {
     <header style={styles.header}>
       <div style={styles.left}>
         <span style={styles.hash}>#</span>
-        <span style={styles.name}>{activeChannel.name}</span>
-        {activeWorkspace && (
-          <div style={{ position: 'relative' }} ref={wsMenuRef}>
-            <span onClick={() => setWsMenuOpen(!wsMenuOpen)} style={{ ...styles.wsBadge, cursor: 'pointer' }}>
-              {activeWorkspace.name} <span style={{ fontSize: 9, marginLeft: 2 }}>▼</span>
-            </span>
-            {wsMenuOpen && (
-              <div style={styles.wsDropdown}>
-                {!isWsOwner && (
-                  <button onClick={async () => { 
-                    setWsMenuOpen(false); 
-                    if (window.confirm(`Leave workspace "${activeWorkspace.name}"?`)) { 
-                      try {
-                        await useStore.getState().leaveWorkspace(activeWorkspace._id);
-                      } catch {
-                        useStore.getState().showToast('Failed to leave workspace');
-                      }
-                    } 
-                  }} style={{ ...styles.wsDropdownBtn, color: '#ef4444' }}>
-                    👋 Leave Workspace
-                  </button>
-                )}
-                {isWsOwner && (
-                  <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)' }}>
-                    Owners cannot leave. Delete workspace from sidebar.
-                  </div>
-                )}
-              </div>
-            )}
+        <div style={styles.titleStack}>
+          <div style={styles.nameRow}>
+            <h1 style={styles.name}>{activeChannel.name}</h1>
+            <span style={styles.roleBadge}>{myRole}</span>
           </div>
-        )}
-        <span style={styles.roleBadge}>{myRole}</span>
+          {activeChannel.description && (
+            <p style={styles.desc}>{activeChannel.description}</p>
+          )}
+        </div>
       </div>
 
-      {/* CENTER SECTION (flexible, truncates) */}
-      <div style={styles.center}>
-        {activeChannel.description && (
-          <>
-            <span style={styles.divider}>|</span>
-            <span style={styles.desc}>{activeChannel.description}</span>
-          </>
-        )}
-      </div>
-
-      {/* RIGHT SECTION (fixed, no shrink, actions) */}
       <div style={styles.right}>
         {width > 800 && (
           <span style={styles.memberCount}>
@@ -198,62 +160,78 @@ export default function ChannelHeader() {
 
 const styles = {
   header: { 
-    height: 'var(--header-height)', 
-    padding: '0 20px', 
+    height: 60, 
+    padding: '0 24px', 
     display: 'flex', 
     alignItems: 'center', 
     justifyContent: 'space-between', 
     borderBottom: '1px solid var(--border)', 
     background: 'var(--bg-surface)', 
     flexShrink: 0,
-    gap: 16
+    gap: 20
   },
   left: { 
+    display: 'flex', 
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    minWidth: 0
+  },
+  titleStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    minWidth: 0,
+    flex: 1,
+    gap: 1
+  },
+  nameRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0
+  },
+  right: { 
     display: 'flex', 
     alignItems: 'center', 
     gap: 8, 
     flexShrink: 0 
   },
-  center: {
-    display: 'flex',
-    alignItems: 'center',
-    flex: 1,
-    minWidth: 0, // CRITICAL: allows flex child to shrink past its content size
-    gap: 8
+  hash: { fontSize: 18, color: 'var(--text-muted)', fontWeight: 500, flexShrink: 0 },
+  name: { 
+    fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', 
+    fontFamily: 'var(--font-display)', margin: 0, lineHeight: 1.4,
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
   },
-  right: { 
-    display: 'flex', 
-    alignItems: 'center', 
-    gap: 6, 
-    flexShrink: 0 
+  roleBadge: {
+    fontSize: 10, padding: '2px 8px', borderRadius: 4, 
+    background: 'var(--accent-glow)', border: '1px solid var(--accent)', 
+    color: 'var(--accent)', fontWeight: 700, textTransform: 'uppercase', 
+    letterSpacing: '0.04em', whiteSpace: 'nowrap', flexShrink: 0
   },
-  hash: { fontSize: 16, color: 'var(--text-muted)' },
-  name: { fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'var(--font-display)', whiteSpace: 'nowrap' },
-  wsBadge: { fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--accent-glow)', border: '1px solid var(--accent)', color: 'var(--accent)', fontWeight: 600, textTransform: 'uppercase', whiteSpace: 'nowrap' },
-  divider: { color: 'var(--border-strong)', flexShrink: 0 },
   desc: { 
-    fontSize: 13, 
-    color: 'var(--text-secondary)', 
+    fontSize: 12, 
+    color: 'var(--text-muted)', 
+    margin: 0,
     overflow: 'hidden', 
     textOverflow: 'ellipsis', 
     whiteSpace: 'nowrap',
-    flex: 1 
+    lineHeight: 1.3
   },
   memberCount: { fontSize: 12, color: 'var(--text-muted)', marginRight: 8, whiteSpace: 'nowrap' },
   btn: { 
-    padding: '5px 12px', 
-    borderRadius: 6, 
+    padding: '6px 14px', 
+    borderRadius: 8, 
     fontSize: 12, 
-    fontWeight: 500, 
+    fontWeight: 600, 
     color: 'var(--text-secondary)', 
-    background: 'none', 
+    background: 'var(--bg-elevated)', 
     border: '1px solid var(--border)', 
     cursor: 'pointer', 
-    transition: 'all 0.15s',
+    transition: 'all 0.2s',
     whiteSpace: 'nowrap'
   },
   btnActive: { background: 'var(--accent-glow)', color: 'var(--accent)', borderColor: 'var(--accent)' },
-  roleBadge: { fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-secondary)', marginLeft: 4, fontWeight: 600, textTransform: 'uppercase', whiteSpace: 'nowrap' },
   overflowContainer: { position: 'relative' },
   dropdown: {
     position: 'absolute',

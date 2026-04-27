@@ -6,7 +6,7 @@ import useStore from '../store/useStore';
 
 export default function AuthPage() {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'member' });
+  const [form, setForm] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { setUser, setToken } = useStore();
@@ -16,10 +16,20 @@ export default function AuthPage() {
     e.preventDefault();
     setError(''); setLoading(true);
     try {
+      const email = form.email.trim();
+      const password = form.password;
+      const name = form.name.trim();
+
+      if (mode === 'register') {
+        if (!name) return setError('Name is required');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return setError('Invalid email format');
+      }
+
       const endpoint = mode === 'login' ? '/auth/login' : '/auth/register';
       const payload  = mode === 'login'
-        ? { email: form.email, password: form.password }
-        : form;
+        ? { email, password }
+        : { ...form, email, name };
+
       const { data } = await api.post(endpoint, payload);
       setToken(data.token);
       setUser(data.user);
@@ -34,13 +44,24 @@ export default function AuthPage() {
     } catch (err) {
       setError(err.response?.data?.error || 'Something went wrong');
     } finally {
-      setLoading(false);
+      setLoading(true); // Keep loading true during redirect
+      setTimeout(() => setLoading(false), 500);
     }
   };
 
+  const switchMode = (m) => {
+    setMode(m);
+    setError('');
+    setForm({ name: '', email: '', password: '' });
+  };
+
   const inp = (field) => ({
-    value: form[field],
-    onChange: (e) => setForm(f => ({ ...f, [field]: e.target.value }))
+    value: form[field] || '',
+    autoComplete: field === 'password' ? 'current-password' : 'email',
+    onChange: (e) => {
+      const val = e.target.value;
+      setForm(f => ({ ...f, [field]: val }));
+    }
   });
 
   return (
@@ -63,7 +84,7 @@ export default function AuthPage() {
         <form style={styles.card} onSubmit={handle}>
           <div style={styles.tabs}>
             {['login', 'register'].map(m => (
-              <button key={m} type="button" onClick={() => setMode(m)}
+              <button key={m} type="button" onClick={() => switchMode(m)}
                 style={{ ...styles.tab, ...(mode === m ? styles.tabActive : {}) }}>
                 {m === 'login' ? 'Sign in' : 'Create account'}
               </button>

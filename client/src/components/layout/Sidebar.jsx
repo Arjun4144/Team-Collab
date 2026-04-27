@@ -4,8 +4,7 @@ import { getInitials, statusConfig } from '../../utils/helpers';
 import api from '../../utils/api';
 import NotificationBell from './NotificationBell';
 import Avatar from './Avatar';
-import ProfileSettingsModal from './ProfileSettingsModal';
-import UserProfileModal from './UserProfileModal';
+import ProfileModal from './ProfileModal';
 
 const ChannelRow = ({ ch, onRename, onDelete, isWsAdmin }) => {
   const { user, activeChannel, selectChannel, clearChannelMessages, showToast } = useStore();
@@ -53,7 +52,7 @@ const ChannelRow = ({ ch, onRename, onDelete, isWsAdmin }) => {
 };
 
 const WorkspaceSection = ({ ws, onRename, onDeleteChannel }) => {
-  const { user, activeWorkspace, selectWorkspace, channels, showToast, generateInviteLink, createChannel, renameWorkspace, deleteWorkspace, leaveWorkspace } = useStore();
+  const { user, activeWorkspace, selectWorkspace, channels, showToast, generateInviteLink, createChannel, renameWorkspace, deleteWorkspace, leaveWorkspace, setConfirmModal } = useStore();
   const [expanded, setExpanded] = useState(true);
   const [showNewCh, setShowNewCh] = useState(false);
   const [newChName, setNewChName] = useState('');
@@ -117,7 +116,18 @@ const WorkspaceSection = ({ ws, onRename, onDeleteChannel }) => {
                     <button onClick={() => { setMenuOpen(false); setShowNewCh(true); }} style={styles.dropdownBtn}>➕ New Channel</button>
                     <button onClick={handleInvite} style={styles.dropdownBtn}>📋 Invite Link</button>
                     <button onClick={() => { setMenuOpen(false); setRenameMode(true); setWsRename(ws.name); }} style={styles.dropdownBtn}>✏️ Rename</button>
-                    <button onClick={async () => { setMenuOpen(false); if (window.confirm(`Delete workspace "${ws.name}"? All data will be lost.`)) { try { await deleteWorkspace(ws._id); showToast('Workspace deleted'); } catch { showToast('Failed'); } } }} style={{ ...styles.dropdownBtn, color: '#ef4444' }}>🗑️ Delete</button>
+                    <button onClick={() => { 
+                      setMenuOpen(false); 
+                      setConfirmModal({
+                        title: 'Delete Workspace',
+                        message: <>Are you sure you want to delete <strong>{ws.name}</strong>? All data will be lost.</>,
+                        confirmText: 'Delete',
+                        type: 'danger',
+                        onConfirm: async () => {
+                          try { await deleteWorkspace(ws._id); showToast('Workspace deleted'); } catch { showToast('Failed'); }
+                        }
+                      });
+                    }} style={{ ...styles.dropdownBtn, color: '#ef4444' }}>🗑️ Delete</button>
                   </>
                 ) : (
                   <>
@@ -127,7 +137,18 @@ const WorkspaceSection = ({ ws, onRename, onDeleteChannel }) => {
                         <button onClick={handleInvite} style={styles.dropdownBtn}>📋 Invite Link</button>
                       </>
                     )}
-                    <button onClick={async () => { setMenuOpen(false); if (window.confirm(`Leave workspace "${ws.name}"?`)) { try { await leaveWorkspace(ws._id); showToast('Left workspace'); } catch { showToast('Failed'); } } }} style={{ ...styles.dropdownBtn, color: '#ef4444' }}>👋 Leave Workspace</button>
+                    <button onClick={() => { 
+                      setMenuOpen(false); 
+                      setConfirmModal({
+                        title: 'Leave Workspace',
+                        message: <>Are you sure you want to leave <strong>{ws.name}</strong>?</>,
+                        confirmText: 'Leave',
+                        type: 'danger',
+                        onConfirm: async () => {
+                          try { await leaveWorkspace(ws._id); showToast('Left workspace'); } catch { showToast('Failed'); }
+                        }
+                      });
+                    }} style={{ ...styles.dropdownBtn, color: '#ef4444' }}>👋 Leave Workspace</button>
                   </>
                 )}
               </div>
@@ -168,7 +189,13 @@ const WorkspaceSection = ({ ws, onRename, onDeleteChannel }) => {
 };
 
 export default function Sidebar() {
-  const { user, workspaces, channels, activeWorkspace, activeChannel, selectWorkspace, selectChannel, setRightPanel, rightPanel, logout, showToast, renameChannel, deleteChannel, createWorkspace } = useStore();
+  const { 
+    user, workspaces, channels, activeWorkspace, activeChannel, 
+    selectWorkspace, selectChannel, setRightPanel, rightPanel, 
+    logout, showToast, renameChannel, deleteChannel, createWorkspace,
+    profileUser, setProfileUser
+  } = useStore();
+
   const [showCreateWs, setShowCreateWs] = useState(false);
   const [newWsName, setNewWsName] = useState('');
   const [showJoin, setShowJoin] = useState(false);
@@ -178,9 +205,9 @@ export default function Sidebar() {
   const [deleteChannelData, setDeleteChannelData] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isResizerHovered, setIsResizerHovered] = useState(false);
+  const [isSidebarVisible, setIsSidebarVisible] = useState(window.innerWidth > 768);
   const [isResizing, setIsResizing] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [showProfileSettings, setShowProfileSettings] = useState(false);
   const profileMenuRef = useRef(null);
 
   useEffect(() => {
@@ -311,7 +338,7 @@ export default function Sidebar() {
         </div>
 
         <nav style={styles.navIcons}>
-          {[{ id: 'decisions', icon: '✅', label: 'Decisions' }, { id: 'all_users', icon: '👥', label: 'All Users' }].map(({ id, icon, label }) => (
+          {[{ id: 'decisions', icon: '✅', label: 'Decisions' }, { id: 'all_users', icon: '👥', label: 'People' }].map(({ id, icon, label }) => (
             <button key={id} title={label} onClick={() => setRightPanel(id)} style={{ ...styles.navBtn, ...(rightPanel === id ? styles.navBtnActive : {}) }}>
               <span style={{ fontSize: 16 }}>{icon}</span>
             </button>
@@ -400,7 +427,7 @@ export default function Sidebar() {
           
           {profileMenuOpen && (
             <div style={{ ...styles.dropdown, bottom: '100%', left: 0, marginBottom: 8 }}>
-              <button onClick={() => setShowProfileSettings(true)} style={styles.dropdownBtn}>⚙️ Profile Settings</button>
+              <button onClick={() => { setProfileUser(user); setProfileMenuOpen(false); }} style={styles.dropdownBtn}>⚙️ Profile Settings</button>
               <div style={styles.dropdownDivider} />
               <button onClick={logout} style={{ ...styles.dropdownBtn, color: '#ef4444' }}>⎋ Logout</button>
             </div>
@@ -409,11 +436,6 @@ export default function Sidebar() {
         
         <button onClick={toggleTheme} title="Toggle Theme" style={styles.logoutBtn}>🌓</button>
       </div>
-
-      <ProfileSettingsModal 
-        isOpen={showProfileSettings} 
-        onClose={() => setShowProfileSettings(false)} 
-      />
 
       {renameData && (
         <div style={styles.modalOverlay} onClick={() => setRenameData(null)}>

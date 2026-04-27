@@ -5,6 +5,8 @@ const Message = require('../models/Message');
 const Task = require('../models/Task');
 const Decision = require('../models/Decision');
 const { auth } = require('../middleware/auth');
+const Invite = require('../models/Invite');
+const crypto = require('crypto');
 
 // Helper to check if a user is a workspace admin
 const isWorkspaceAdmin = (workspace, userId) => {
@@ -101,12 +103,8 @@ router.put('/:id', auth, async (req, res) => {
 
     // Broadcast to all members
     const io = req.app.get('io');
-    const onlineUsers = req.app.get('onlineUsers');
-    if (io && onlineUsers) {
-      workspace.members.forEach(member => {
-        const socketId = onlineUsers.get(member._id.toString());
-        if (socketId) io.to(socketId).emit('workspace:updated', workspace);
-      });
+    if (io) {
+      io.to(`workspace:${workspace._id}`).emit('workspace:updated', workspace);
     }
 
     res.json(workspace);
@@ -137,15 +135,41 @@ router.delete('/:id', auth, async (req, res) => {
 
     // Broadcast deletion to all members
     const io = req.app.get('io');
-    const onlineUsers = req.app.get('onlineUsers');
-    if (io && onlineUsers) {
-      workspace.members.forEach(memberId => {
-        const socketId = onlineUsers.get(memberId.toString());
-        if (socketId) io.to(socketId).emit('workspace:deleted', workspace._id);
-      });
+    if (io) {
+      io.to(`workspace:${workspace._id}`).emit('workspace:deleted', workspace._id);
     }
 
     res.json({ success: true, message: 'Workspace deleted successfully' });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+
+// Helper to generate a short invite code
+const generateInviteCode = () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+};
+
+// ... (existing helper and routes)
+
+/**
+ * @route   GET /api/workspaces/:id/members
+ * @desc    Get all members of a specific workspace
+ * @access  Private (Membership required)
+ */
+router.get('/:id/members', auth, async (req, res) => {
+  try {
+    const workspace = await Workspace.findById(req.params.id).populate('members', 'name email avatar status bio');
+    if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
+    
+    const isMember = workspace.members.some(m => m._id.toString() === req.user._id.toString());
+    if (!isMember) return res.status(403).json({ error: 'You are not a member of this workspace' });
+    
+    res.json(workspace.members);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -158,17 +182,40 @@ router.post('/:id/invite', auth, async (req, res) => {
       return res.status(403).json({ error: 'Only workspace admins can generate invites' });
     }
     
-    workspace.generateInviteCode();
-    await workspace.save();
-    res.json({ inviteCode: workspace.inviteCode, inviteLink: `/invite/${workspace.inviteCode}` });
+    // Generate a unique short code
+    let code;
+    let isUnique = false;
+    while (!isUnique) {
+      code = generateInviteCode();
+      const existing = await Invite.findOne({ code });
+      if (!existing) isUnique = true;
+    }
+
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
+
+    await Invite.create({
+      code,
+      workspaceId: workspace._id,
+      expiresAt,
+      createdBy: req.user._id
+    });
+
+    res.json({ inviteCode: code, inviteLink: `/invite/${code}`, expiresAt });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // JOIN via invite code — any authenticated user
 router.post('/join/:inviteCode', auth, async (req, res) => {
   try {
-    const workspace = await Workspace.findOne({ inviteCode: req.params.inviteCode });
-    if (!workspace) return res.status(404).json({ error: 'Invalid or expired invite link' });
+    const invite = await Invite.findOne({ code: req.params.inviteCode });
+    if (!invite) return res.status(404).json({ error: 'Invalid or missing invite code' });
+    
+    if (invite.expiresAt < new Date()) {
+      return res.status(400).json({ error: 'Invite link has expired' });
+    }
+
+    const workspace = await Workspace.findById(invite.workspaceId);
+    if (!workspace) return res.status(404).json({ error: 'Workspace no longer exists' });
     
     const alreadyMember = workspace.members.some(m => m.toString() === req.user._id.toString());
     if (alreadyMember) {
@@ -190,18 +237,13 @@ router.post('/join/:inviteCode', auth, async (req, res) => {
 
     const io = req.app.get('io');
     const onlineUsers = req.app.get('onlineUsers');
-    if (io && onlineUsers) {
+    if (io) {
       const payload = {
         workspaceId: workspace._id,
-        newUser: req.user,
+        newUser: { _id: req.user._id, name: req.user.name, avatar: req.user.avatar, status: req.user.status },
         updatedMembers: workspace.members
       };
-      workspace.members.forEach(member => {
-        if (member._id.toString() !== req.user._id.toString()) {
-          const socketId = onlineUsers.get(member._id.toString());
-          if (socketId) io.to(socketId).emit('workspace:userJoined', payload);
-        }
-      });
+      io.to(`workspace:${workspace._id}`).emit('workspace:userJoined', payload);
     }
 
     res.json({ workspace, alreadyMember: false });
@@ -232,23 +274,14 @@ router.delete('/:id/leave', auth, async (req, res) => {
     await workspace.populate('members', 'name email avatar status');
 
     const io = req.app.get('io');
-    const onlineUsers = req.app.get('onlineUsers');
-    if (io && onlineUsers) {
+    if (io) {
       const payload = {
         workspaceId: workspace._id,
         userId: targetUserId,
         updatedMembers: workspace.members
       };
-      
-      workspace.members.forEach(member => {
-        const socketId = onlineUsers.get(member._id.toString());
-        if (socketId) io.to(socketId).emit('workspace:userRemoved', payload);
-      });
-      
-      const leavingSocketId = onlineUsers.get(targetUserId);
-      if (leavingSocketId) {
-        io.to(leavingSocketId).emit('workspace:userRemoved', payload);
-      }
+      io.to(`workspace:${workspace._id}`).emit('workspace:userRemoved', payload);
+      io.to(targetUserId).emit('workspace:userRemoved', payload);
     }
 
     res.json({ success: true, message: 'Left workspace successfully' });

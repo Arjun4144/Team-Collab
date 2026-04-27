@@ -10,8 +10,13 @@ export const formatTime = (date) => {
 export const formatRelative = (date) =>
   formatDistanceToNow(new Date(date), { addSuffix: true });
 
-export const getInitials = (name = '') =>
-  name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+export const getInitials = (name = '') => {
+  if (!name || typeof name !== 'string') return '?';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+};
 
 export const intentConfig = {
   discussion:   { label: 'Discussion',   icon: '💬', color: '#818cf8' },

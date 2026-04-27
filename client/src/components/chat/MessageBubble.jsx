@@ -4,7 +4,7 @@ import useStore from '../../store/useStore';
 import api from '../../utils/api';
 import { getInitials, formatTime, intentConfig } from '../../utils/helpers';
 import Avatar from '../layout/Avatar';
-import UserProfileModal from '../layout/UserProfileModal';
+import ProfileModal from '../layout/ProfileModal';
 
 // Global: only one audio plays at a time
 let globalPlayingAudio = null;
@@ -178,12 +178,11 @@ const dlStyles = {
 };
 
 export default function MessageBubble({ message, onReply }) {
-  const { user, updateMessage, setActiveThread, setReplyingTo, hideMessage, activeChannel, deleteMessageForEveryone, messages, setTaskDraft, setRightPanel } = useStore();
+  const { user, updateMessage, setActiveThread, setReplyingTo, hideMessage, activeChannel, deleteMessageForEveryone, messages, setTaskDraft, setRightPanel, profileUser, setProfileUser } = useStore();
   const [showVerdict, setShowVerdict] = useState(false);
   const [verdict, setVerdict] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
   const [dropdownPos, setDropdownPos] = useState({ top: 'auto', bottom: 'auto', left: 'auto', right: 'auto' });
-  const [showProfile, setShowProfile] = useState(false);
   const dropdownRef = useRef(null);
   const triggerRef = useRef(null);
 
@@ -278,7 +277,7 @@ export default function MessageBubble({ message, onReply }) {
     >
       {/* Avatar — only for others */}
       {!isOwn && (
-        <div style={styles.avatarWrap} onClick={() => setShowProfile(true)}>
+        <div style={styles.avatarWrap} onClick={() => setProfileUser(message.sender)}>
           <Avatar user={message.sender} size={30} style={{ cursor: 'pointer' }} />
         </div>
       )}
@@ -293,7 +292,7 @@ export default function MessageBubble({ message, onReply }) {
       }}>
         {/* Sender name — only for others */}
         {!isOwn && (
-          <div style={styles.senderName} onClick={() => setShowProfile(true)}>{message.sender?.name || 'Unknown'}</div>
+          <div style={styles.senderName} onClick={() => setProfileUser(message.sender)}>{message.sender?.name || 'Unknown'}</div>
         )}
 
         {/* Meta row for intent/resolved badges (only render if there's something to show) */}
@@ -349,8 +348,7 @@ export default function MessageBubble({ message, onReply }) {
         {message.messageType === 'audio' && message.attachments?.[0] && (() => {
           const att = message.attachments[0];
           const actualUrl = att.url?.startsWith('/uploads/') ? att.url : (att.url?.startsWith('blob:') ? att.url : `/uploads/${att.url}`);
-          const backendUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
-          const audioUrl = att.url?.startsWith('blob:') ? att.url : `${backendUrl}${actualUrl}`;
+          const audioUrl = actualUrl;
           return <AudioPlayer audioUrl={audioUrl} duration={message.audioDuration || 0} isOwn={isOwn} />;
         })()}
 
@@ -368,8 +366,7 @@ export default function MessageBubble({ message, onReply }) {
               const isAudio = att.type?.startsWith('audio/');
               if (isAudio) return null; // handled by AudioPlayer
               const actualUrl = att.url?.startsWith('/uploads/') ? att.url : `/uploads/${att.url}`;
-              const backendUrl = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '';
-              const fileUrl = `${backendUrl}${actualUrl}`;
+              const fileUrl = actualUrl;
               return (
                 <div key={i} style={styles.attachment}>
                   {isImage ? (
@@ -485,11 +482,6 @@ export default function MessageBubble({ message, onReply }) {
         </div>
       </div>
 
-      <UserProfileModal 
-        isOpen={showProfile} 
-        onClose={() => setShowProfile(false)} 
-        user={message.sender} 
-      />
     </div>
   );
 }

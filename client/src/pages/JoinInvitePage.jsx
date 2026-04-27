@@ -19,7 +19,7 @@ export default function JoinInvitePage() {
     const join = async () => {
       try {
         const workspace = await joinWorkspaceByInvite(inviteCode);
-        await fetchWorkspaces();
+        await Promise.all([fetchWorkspaces(), useStore.getState().fetchUsers()]);
         selectWorkspace(workspace);
         setStatus('success');
         setTimeout(() => navigate('/'), 1500);

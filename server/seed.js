@@ -22,10 +22,10 @@ async function seed() {
 
   // ── Users ──────────────────────────────────────────────────
   const [alice, bob, carol, dave] = await User.insertMany([
-    { name: 'Alice Chen',    email: 'alice@nexus.dev', password: 'password123', role: 'admin',  status: 'online'  },
-    { name: 'Bob Martinez',  email: 'bob@nexus.dev',   password: 'password123', role: 'member', status: 'online'  },
-    { name: 'Carol Smith',   email: 'carol@nexus.dev', password: 'password123', role: 'member', status: 'away'    },
-    { name: 'Dave Wilson',   email: 'dave@nexus.dev',  password: 'password123', role: 'guest',  status: 'offline' },
+    { name: 'Alice Chen',    email: 'alice@nexus.dev', password: 'password123', status: 'online'  },
+    { name: 'Bob Martinez',  email: 'bob@nexus.dev',   password: 'password123', status: 'online'  },
+    { name: 'Carol Smith',   email: 'carol@nexus.dev', password: 'password123', status: 'away'    },
+    { name: 'Dave Wilson',   email: 'dave@nexus.dev',  password: 'password123', status: 'offline' },
   ]);
   // Hash passwords properly via save()
   for (const raw of [

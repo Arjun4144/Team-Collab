@@ -1,11 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { getInitials } from '../../utils/helpers';
 
 export default function Avatar({ user, size = 32, fontSize = 11, style = {} }) {
+  const [error, setError] = useState(false);
   if (!user) return null;
 
   const initials = getInitials(user.name);
-  const avatarUrl = user.avatar?.url || user.avatar; // Handle both old string and new object format
+  let avatarUrl = user.avatar?.url || user.avatar; 
+  
+  // Ensure avatarUrl is a string and not an object or empty
+  if (typeof avatarUrl !== 'string' || !avatarUrl.trim()) {
+    avatarUrl = null;
+  }
 
   return (
     <div 
@@ -27,10 +33,11 @@ export default function Avatar({ user, size = 32, fontSize = 11, style = {} }) {
         ...style
       }}
     >
-      {avatarUrl ? (
+      {(avatarUrl && !error) ? (
         <img 
           src={avatarUrl} 
           alt={user.name} 
+          onError={() => setError(true)}
           style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
         />
       ) : (

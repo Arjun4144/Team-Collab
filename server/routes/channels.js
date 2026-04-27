@@ -89,12 +89,8 @@ router.post('/', auth, async (req, res) => {
 
     // Broadcast to all workspace members
     const io = req.app.get('io');
-    const onlineUsers = req.app.get('onlineUsers');
-    if (io && onlineUsers) {
-      workspace.members.forEach(memberId => {
-        const socketId = onlineUsers.get(memberId.toString());
-        if (socketId) io.to(socketId).emit('channel:created', { channel, workspaceId });
-      });
+    if (io) {
+      io.to(`workspace:${workspaceId}`).emit('channel:created', { channel, workspaceId });
     }
 
     res.status(201).json(channel);
@@ -105,7 +101,7 @@ router.post('/', auth, async (req, res) => {
 router.get('/:id', auth, async (req, res) => {
   try {
     const channel = await Channel.findById(req.params.id)
-      .populate('members', 'name email avatar status role')
+      .populate('members', 'name email avatar status')
       .populate('createdBy', 'name email');
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
     const isMember = channel.members.some(m => m._id.toString() === req.user._id.toString());
@@ -114,37 +110,6 @@ router.get('/:id', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// GENERATE invite link — channel admin only (kept for backward compat, but workspace invite is preferred)
-router.post('/:id/invite', auth, async (req, res) => {
-  try {
-    const channel = await Channel.findById(req.params.id);
-    if (!channel) return res.status(404).json({ error: 'Channel not found' });
-    if (!isChannelAdmin(channel, req.user._id)) return res.status(403).json({ error: 'Only channel admins can generate invites' });
-    
-    channel.generateInviteCode();
-    await channel.save();
-    res.json({ inviteCode: channel.inviteCode, inviteLink: `/invite/${channel.inviteCode}` });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// JOIN via invite code — any authenticated user
-router.post('/join/:inviteCode', auth, async (req, res) => {
-  try {
-    const channel = await Channel.findOne({ inviteCode: req.params.inviteCode, isArchived: false });
-    if (!channel) return res.status(404).json({ error: 'Invalid or expired invite link' });
-    
-    const alreadyMember = channel.members.some(m => m.toString() === req.user._id.toString());
-    if (alreadyMember) {
-      await channel.populate('members', 'name email avatar status');
-      return res.json({ channel, alreadyMember: true });
-    }
-    
-    channel.members.push(req.user._id);
-    await channel.save();
-    await channel.populate('members', 'name email avatar status');
-    res.json({ channel, alreadyMember: false });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
 
 // RENAME / UPDATE channel — workspace admin only
 router.patch('/:id', auth, async (req, res) => {
@@ -169,12 +134,8 @@ router.patch('/:id', auth, async (req, res) => {
     await channel.populate('members', 'name email avatar status');
 
     const io = req.app.get('io');
-    const onlineUsers = req.app.get('onlineUsers');
-    if (io && onlineUsers) {
-      channel.members.forEach(member => {
-        const socketId = onlineUsers.get(member._id.toString());
-        if (socketId) io.to(socketId).emit('channel:updated', channel);
-      });
+    if (io) {
+      io.to(`channel:${channel._id}`).emit('channel:updated', channel);
     }
 
     res.json(channel);
@@ -211,12 +172,8 @@ router.delete('/:id', auth, async (req, res) => {
     ]);
 
     const io = req.app.get('io');
-    const onlineUsers = req.app.get('onlineUsers');
-    if (io && onlineUsers) {
-      channel.members.forEach(memberId => {
-        const socketId = onlineUsers.get(memberId.toString());
-        if (socketId) io.to(socketId).emit('channel:deleted', { channelId: channel._id, workspaceId: channel.workspaceId });
-      });
+    if (io) {
+      io.to(`channel:${channel._id}`).emit('channel:deleted', { channelId: channel._id, workspaceId: channel.workspaceId });
     }
 
     res.json({ success: true, message: 'Channel deleted successfully' });
@@ -274,8 +231,7 @@ router.delete('/:id/members/:userId', auth, async (req, res) => {
 
         // 3. Emit real-time sync event
         const io = req.app.get('io');
-        const onlineUsers = req.app.get('onlineUsers');
-        if (io && onlineUsers) {
+        if (io) {
           const payload = {
             workspaceId: workspace._id,
             userId: targetUserId,
@@ -283,15 +239,9 @@ router.delete('/:id/members/:userId', auth, async (req, res) => {
           };
           
           // Tell everyone in the workspace that this user was removed
-          workspace.members.forEach(member => {
-            const socketId = onlineUsers.get(member._id.toString());
-            if (socketId) io.to(socketId).emit('workspace:userRemoved', payload);
-          });
-          // Also explicitly tell the removed user if they are online
-          const removedSocketId = onlineUsers.get(targetUserId);
-          if (removedSocketId) {
-            io.to(removedSocketId).emit('workspace:userRemoved', payload);
-          }
+          io.to(`workspace:${workspace._id}`).emit('workspace:userRemoved', payload);
+          // Also explicitly tell the removed user
+          io.to(targetUserId).emit('workspace:userRemoved', payload);
         }
       }
     } else {
@@ -335,18 +285,14 @@ router.post('/:id/admins/:userId', auth, async (req, res) => {
         await workspace.populate('members', 'name email avatar status');
 
         const io = req.app.get('io');
-        const onlineUsers = req.app.get('onlineUsers');
-        if (io && onlineUsers) {
+        if (io) {
           const payload = {
             workspaceId: workspace._id,
             userId: targetUserId,
             newRole: 'Admin',
             updatedMembers: workspace.members
           };
-          workspace.members.forEach(member => {
-            const socketId = onlineUsers.get(member._id.toString());
-            if (socketId) io.to(socketId).emit('workspace:userRoleUpdated', payload);
-          });
+          io.to(`workspace:${workspace._id}`).emit('workspace:userRoleUpdated', payload);
         }
       }
     } else {
@@ -403,18 +349,14 @@ router.delete('/:id/admins/:userId', auth, async (req, res) => {
         await workspace.populate('members', 'name email avatar status');
 
         const io = req.app.get('io');
-        const onlineUsers = req.app.get('onlineUsers');
-        if (io && onlineUsers) {
+        if (io) {
           const payload = {
             workspaceId: workspace._id,
             userId: targetUserId,
             newRole: 'Member',
             updatedMembers: workspace.members
           };
-          workspace.members.forEach(member => {
-            const socketId = onlineUsers.get(member._id.toString());
-            if (socketId) io.to(socketId).emit('workspace:userRoleUpdated', payload);
-          });
+          io.to(`workspace:${workspace._id}`).emit('workspace:userRoleUpdated', payload);
         }
       }
     } else {
