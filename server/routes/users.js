@@ -111,7 +111,7 @@ router.put('/profile', auth, upload.single('avatar'), async (req, res) => {
           console.error('Error deleting avatar during removal:', error);
         }
       }
-      updates.avatar = null;
+      updates.avatar = { url: '', public_id: '' };
     } 
     // Handle new avatar upload
     else if (req.file) {

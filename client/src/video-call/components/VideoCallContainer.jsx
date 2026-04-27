@@ -3,7 +3,7 @@
  * Orchestrates WebRTC, controls, video grid, and in-call chat.
  * Default state: camera OFF, mic OFF — no media acquired until user toggles.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import VideoGrid from './VideoGrid';
 import Controls from './Controls';
 import ChatBox from './ChatBox';
@@ -37,9 +37,15 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
     cleanup,
   } = useWebRTC(channelId, true);
 
-  // Cleanup on unmount only
+  // ── Strict Mode & Mount Guard ──
+  // We intentionally do NOT call `cleanup()` on standard unmount.
+  // React 18 Strict Mode unmounts and remounts immediately; calling cleanup here
+  // would destroy the PeerConnections. Instead, cleanup is handled explicitly via 
+  // handleLeave, or when the window unloads.
   useEffect(() => {
-    return () => { cleanup(); };
+    const handleUnload = () => cleanup();
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
   }, [cleanup]);
 
   // Initiate the call AFTER useWebRTC has attached its socket listeners.

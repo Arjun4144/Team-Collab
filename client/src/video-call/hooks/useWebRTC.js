@@ -6,8 +6,25 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { getSocket } from '../../utils/socket';
 
 const ICE_SERVERS = [
+  // ── STUN (public IP discovery) ──
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  // ── TURN (relay for NAT traversal — REQUIRED for cross-machine calls) ──
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject',
+  },
 ];
 
 // ── Debug logger ──────────────────────────────────────────────
@@ -31,7 +48,6 @@ export default function useWebRTC(channelId, inCall) {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isMicOn, setIsMicOn] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [remoteStreamVersion, setRemoteStreamVersion] = useState(0);
 
   const peerConnections = useRef({});
   const pendingCandidates = useRef({});
@@ -86,51 +102,40 @@ export default function useWebRTC(channelId, inCall) {
     peerConnections.current[remoteSocketId] = pc;
     makingOffer.current[remoteSocketId] = false;
 
-    // Create a persistent stream for this peer
-    const remoteStream = new MediaStream();
+    // We rely entirely on native event.streams binding rather than manual stream mutation.
     setRemoteStreams((prev) => ({
       ...prev,
       [remoteSocketId]: {
-        stream: remoteStream,
+        stream: null, // will be bound from event.streams[0]
         userId: remoteUserId,
         userName: remoteUserName,
       },
     }));
 
-    // Scrape function: check all receivers and add any new tracks to the persistent stream
-    pc.scrapeReceivers = () => {
-      let changed = false;
-      pc.getReceivers().forEach(receiver => {
-        const track = receiver.track;
-        if (track && !remoteStream.getTracks().includes(track)) {
-          remoteStream.addTrack(track);
-          changed = true;
-          // Trigger re-renders when tracks activate/deactivate
-          track.onunmute = () => setRemoteStreamVersion(v => v + 1);
-          track.onmute = () => setRemoteStreamVersion(v => v + 1);
+    D(`  [DEBUG] Initializing transceivers (1 audio, 1 video) for new PC`);
+    pc.addTransceiver('audio', { direction: 'recvonly', streams: [localMediaStream.current] });
+    pc.addTransceiver('video', { direction: 'recvonly', streams: [localMediaStream.current] });
+
+    if (localMediaStream.current) {
+      const activeTracks = localMediaStream.current.getTracks();
+      D(`  [DEBUG] Attaching ${activeTracks.length} existing tracks to transceivers via replaceTrack [${activeTracks.map(t => t.kind).join(',')}]`);
+      activeTracks.forEach(track => {
+        const transceiver = pc.getTransceivers().find(t => t.receiver && t.receiver.track && t.receiver.track.kind === track.kind);
+        if (transceiver && transceiver.sender) {
+          transceiver.sender.replaceTrack(track);
+          transceiver.direction = 'sendrecv';
         }
       });
-      if (changed) setRemoteStreamVersion(v => v + 1);
-    };
+    }
 
-    // Add ALL current local tracks
-    const localTracks = localMediaStream.current.getTracks();
-    D(`  Adding ${localTracks.length} local tracks to new PC:`, localTracks.map(t => `${t.kind}(enabled=${t.enabled})`));
-    localTracks.forEach((track) => {
-      pc.addTrack(track, localMediaStream.current);
-    });
-
-    // Scrape immediately for any receivers created by addTrack
-    pc.scrapeReceivers();
-
-    // ── onnegotiationneeded ──
+    // ── onnegotiationneeded (perfect negotiation pattern) ──
     pc.onnegotiationneeded = async () => {
-      D(`onnegotiationneeded FIRED for ${remoteSocketId.slice(-6)} | signalingState=${pc.signalingState}`);
+      D(`onnegotiationneeded FIRED for ${remoteSocketId.slice(-6)} | signalingState=${pc.signalingState} | senders=${pc.getSenders().length}`);
       dumpPeerState('onnegotiationneeded', peerConnections);
       try {
         makingOffer.current[remoteSocketId] = true;
         await pc.setLocalDescription();
-        D(`  → Offer created & set. Sending to ${remoteSocketId.slice(-6)} | type=${pc.localDescription.type}`);
+        D(`  → Offer created & set. Sending to ${remoteSocketId.slice(-6)} | type=${pc.localDescription.type} | senders=${pc.getSenders().length}`);
         socket.emit('webrtc:offer', {
           channelId: channelIdRef.current,
           targetSocketId: remoteSocketId,
@@ -152,22 +157,50 @@ export default function useWebRTC(channelId, inCall) {
     // ── ICE Candidates ──
     pc.onicecandidate = (event) => {
       if (event.candidate && socket) {
+        D(`ICE candidate for ${remoteSocketId.slice(-6)} | type=${event.candidate.type} protocol=${event.candidate.protocol} address=${event.candidate.address || 'hidden'}`);
         socket.emit('webrtc:ice-candidate', {
           channelId: channelIdRef.current,
           targetSocketId: remoteSocketId,
           candidate: event.candidate,
         });
+      } else if (!event.candidate) {
+        D(`ICE gathering complete for ${remoteSocketId.slice(-6)}`);
       }
     };
 
     // ── Remote tracks ──
     pc.ontrack = (event) => {
-      D(`ontrack FIRED from ${remoteSocketId.slice(-6)} | track=${event.track.kind}`);
-      pc.scrapeReceivers();
+      D(`  → [DEBUG] ontrack FIRED from ${remoteSocketId.slice(-6)} | track=${event.track.kind} id=${event.track.id.slice(-6)} streams=${event.streams.length}`);
+      if (event.streams && event.streams[0]) {
+        D(`  Binding stream ID: ${event.streams[0].id}`);
+        setRemoteStreams((prev) => ({
+          ...prev,
+          [remoteSocketId]: {
+            ...prev[remoteSocketId],
+            stream: event.streams[0],
+          },
+        }));
+      }
     };
 
     pc.oniceconnectionstatechange = () => {
-      D(`ICE state change for ${remoteSocketId.slice(-6)}: ${pc.iceConnectionState}`);
+      D(`ICE connection state for ${remoteSocketId.slice(-6)}: ${pc.iceConnectionState}`);
+      // Auto ICE restart on failure
+      if (pc.iceConnectionState === 'failed') {
+        WARN(`ICE failed for ${remoteSocketId.slice(-6)} — attempting ICE restart`);
+        pc.restartIce();
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      D(`Connection state for ${remoteSocketId.slice(-6)}: ${pc.connectionState}`);
+      if (pc.connectionState === 'failed') {
+        ERR(`Connection FAILED for ${remoteSocketId.slice(-6)} — peer may be unreachable`);
+      }
+    };
+
+    pc.onicegatheringstatechange = () => {
+      D(`ICE gathering state for ${remoteSocketId.slice(-6)}: ${pc.iceGatheringState}`);
     };
 
     pc.onsignalingstatechange = () => {
@@ -188,48 +221,29 @@ export default function useWebRTC(channelId, inCall) {
   }, []);
 
   // ── Sync a track to ALL peer connections ─────────────────────
+  // oldTrack: if provided, find the sender that currently carries this exact track
+  //           and replace it. If null, find by kind OR add a new sender.
 
   const syncTrackToAllPeers = useCallback((track) => {
     const pcEntries = Object.entries(peerConnections.current);
-    D(`syncTrackToAllPeers: track=${track.kind} enabled=${track.enabled} | peerCount=${pcEntries.length}`);
-
-    if (pcEntries.length === 0) {
-      WARN('  No peer connections exist! Track will not be sent to anyone.');
-      return;
-    }
+    D(`syncTrackToAllPeers: track=${track.kind} id=${track.id.slice(-6)} enabled=${track.enabled} | peerCount=${pcEntries.length}`);
 
     pcEntries.forEach(([socketId, pc]) => {
-      const senders = pc.getSenders();
-      D(`  PC[${socketId.slice(-6)}]: ${senders.length} senders: [${senders.map(s => s.track?.kind || 'null').join(',')}]`);
+      const transceivers = pc.getTransceivers();
+      // Find the specific transceiver for this media kind
+      const transceiver = transceivers.find(t => t.receiver && t.receiver.track && t.receiver.track.kind === track.kind);
 
-      const sender = senders.find((s) =>
-        s.track?.kind === track.kind ||
-        (!s.track && pc.getTransceivers().find(
-          (t) => t.sender === s && t.mid !== null && t.receiver?.track?.kind === track.kind
-        ))
-      );
+      if (transceiver && transceiver.sender) {
+        D(`  → [DEBUG] replaceTrack on existing ${track.kind} transceiver for ${socketId.slice(-6)}`);
+        transceiver.sender.replaceTrack(track).catch(err => ERR('  replaceTrack error:', err));
 
-      if (sender) {
-        D(`  → replaceTrack on existing sender (kind=${sender.track?.kind || 'null'})`);
-        sender.replaceTrack(track).catch((err) => {
-          ERR('  replaceTrack error:', err);
-          try { pc.addTrack(track, localMediaStream.current); } catch {}
-        });
-
-        // Ensure the transceiver allows sending so that negotiation is triggered if needed
-        const transceiver = pc.getTransceivers().find(t => t.sender === sender);
-        if (transceiver) {
-          if (transceiver.direction === 'recvonly') {
-            D('  → Changing transceiver direction to sendrecv');
-            transceiver.direction = 'sendrecv';
-          } else if (transceiver.direction === 'inactive') {
-            D('  → Changing transceiver direction to sendonly');
-            transceiver.direction = 'sendonly';
-          }
+        // Ensure transceiver allows sending
+        if (transceiver.direction === 'recvonly' || transceiver.direction === 'inactive') {
+          transceiver.direction = transceiver.direction === 'recvonly' ? 'sendrecv' : 'sendonly';
+          D(`  → [DEBUG] Changed transceiver direction to ${transceiver.direction}`);
         }
       } else {
-        D(`  → addTrack (new sender — will trigger onnegotiationneeded)`);
-        pc.addTrack(track, localMediaStream.current);
+        WARN(`  No ${track.kind} transceiver found for ${socketId.slice(-6)}. Cannot sync track. Ensure transceivers are initialized on PC creation.`);
       }
     });
 
@@ -248,10 +262,12 @@ export default function useWebRTC(channelId, inCall) {
           const stream = await navigator.mediaDevices.getUserMedia({
             video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
           });
+          D(`  → [DEBUG] getUserMedia RESOLVED (video)`);
           const track = stream.getVideoTracks()[0];
           D(`  Got video track: id=${track.id} enabled=${track.enabled} readyState=${track.readyState}`);
           videoTrackRef.current = track;
-          localMediaStream.current.getVideoTracks().forEach((t) => localMediaStream.current.removeTrack(t));
+          // Replace all video tracks in local stream with the new camera track
+          localMediaStream.current.getVideoTracks().forEach(t => localMediaStream.current.removeTrack(t));
           localMediaStream.current.addTrack(track);
           D(`  localMediaStream now has ${localMediaStream.current.getTracks().length} tracks`);
           syncTrackToAllPeers(track);
@@ -262,6 +278,14 @@ export default function useWebRTC(channelId, inCall) {
       } else {
         D('  Re-enabling existing video track');
         videoTrackRef.current.enabled = true;
+      }
+      // If screen share was active, turning on camera replaces it
+      if (isScreenSharingRef.current) {
+        D('  Camera toggled while screen sharing — stopping screen share');
+        if (screenTrackRef.current) { screenTrackRef.current.stop(); screenTrackRef.current = null; }
+        isScreenSharingRef.current = false;
+        setIsScreenSharing(false);
+        previousVideoTrackRef.current = null;
       }
       isCameraOnRef.current = true;
       setIsCameraOn(true);
@@ -288,78 +312,64 @@ export default function useWebRTC(channelId, inCall) {
         
         screenTrack.onended = () => {
           D('Screen share ended by browser');
-          isScreenSharingRef.current = false;
-          setIsScreenSharing(false);
-          
-          if (screenTrackRef.current) {
-            localMediaStream.current.removeTrack(screenTrackRef.current);
-            screenTrackRef.current = null;
-          }
-          
-          const trackToRestore = previousVideoTrackRef.current || videoTrackRef.current;
-          if (trackToRestore) {
-            localMediaStream.current.addTrack(trackToRestore);
-            syncTrackToAllPeers(trackToRestore);
-          } else {
-            const pcs = Object.values(peerConnections.current);
-            pcs.forEach(pc => {
-              const senders = pc.getSenders();
-              const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-              if (videoSender) pc.removeTrack(videoSender);
-            });
-          }
-          previousVideoTrackRef.current = null;
-          refreshLocalStream();
-          broadcastMediaState();
+          stopScreenShare();
         };
 
         screenTrackRef.current = screenTrack;
-        
-        // Remove current camera track from local stream temporarily
-        if (videoTrackRef.current && localMediaStream.current.getVideoTracks().includes(videoTrackRef.current)) {
-          previousVideoTrackRef.current = videoTrackRef.current;
-          localMediaStream.current.removeTrack(videoTrackRef.current);
-        } else {
-          previousVideoTrackRef.current = null;
-        }
+        // Save current camera track for restoration later
+        previousVideoTrackRef.current = videoTrackRef.current;
 
+        // Replace video in local stream with screen track
+        localMediaStream.current.getVideoTracks().forEach(t => localMediaStream.current.removeTrack(t));
         localMediaStream.current.addTrack(screenTrack);
+        D(`  Replaced video sender with screen track. localMediaStream tracks: ${localMediaStream.current.getTracks().length}`);
+
+        // Replace the existing video sender on all peers (NOT addTrack)
         syncTrackToAllPeers(screenTrack);
         
         isScreenSharingRef.current = true;
         setIsScreenSharing(true);
         refreshLocalStream();
         broadcastMediaState();
+        dumpPeerState('After startScreenShare', peerConnections);
       } catch (err) {
         ERR('Screen share error:', err);
       }
     } else {
-      D('Stopping screen share manually');
-      isScreenSharingRef.current = false;
-      setIsScreenSharing(false);
-      
-      if (screenTrackRef.current) {
-        screenTrackRef.current.stop();
-        localMediaStream.current.removeTrack(screenTrackRef.current);
-        screenTrackRef.current = null;
-      }
-      
-      const trackToRestore = previousVideoTrackRef.current || videoTrackRef.current;
-      if (trackToRestore) {
-        localMediaStream.current.addTrack(trackToRestore);
-        syncTrackToAllPeers(trackToRestore);
-      } else {
-        const pcs = Object.values(peerConnections.current);
-        pcs.forEach(pc => {
-          const senders = pc.getSenders();
-          const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-          if (videoSender) pc.removeTrack(videoSender);
-        });
-      }
-      previousVideoTrackRef.current = null;
-      refreshLocalStream();
-      broadcastMediaState();
+      stopScreenShare();
     }
+  }, [syncTrackToAllPeers, refreshLocalStream, broadcastMediaState]);
+
+  // ── Stop Screen Share (reused by onended + manual stop) ──
+  const stopScreenShare = useCallback(() => {
+    D('stopScreenShare called');
+    isScreenSharingRef.current = false;
+    setIsScreenSharing(false);
+    
+    if (screenTrackRef.current) {
+      screenTrackRef.current.stop();
+      localMediaStream.current.getVideoTracks().forEach(t => localMediaStream.current.removeTrack(t));
+      screenTrackRef.current = null;
+    }
+
+    // Restore camera track to the video sender
+    const cameraTrack = previousVideoTrackRef.current || videoTrackRef.current;
+    if (cameraTrack && cameraTrack.readyState === 'live') {
+      D(`  Restoring camera track id=${cameraTrack.id.slice(-6)}`);
+      localMediaStream.current.addTrack(cameraTrack);
+      syncTrackToAllPeers(cameraTrack);
+      isCameraOnRef.current = true;
+      setIsCameraOn(true);
+    } else {
+      D('  No live camera track to restore');
+      isCameraOnRef.current = false;
+      setIsCameraOn(false);
+    }
+    previousVideoTrackRef.current = null;
+
+    refreshLocalStream();
+    broadcastMediaState();
+    dumpPeerState('After stopScreenShare', peerConnections);
   }, [syncTrackToAllPeers, refreshLocalStream, broadcastMediaState]);
 
   // ── Toggle Mic ───────────────────────────────────────────────
@@ -374,6 +384,7 @@ export default function useWebRTC(channelId, inCall) {
           const stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true },
           });
+          D(`  → [DEBUG] getUserMedia RESOLVED (audio)`);
           const track = stream.getAudioTracks()[0];
           D(`  Got audio track: id=${track.id}`);
           audioTrackRef.current = track;
@@ -459,7 +470,6 @@ export default function useWebRTC(channelId, inCall) {
 
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        pc.scrapeReceivers();
         D(`  Remote description set. Creating answer...`);
         await pc.setLocalDescription();
         D(`  → Answer sent to ${fromSocketId.slice(-6)} | type=${pc.localDescription.type}`);
@@ -480,7 +490,6 @@ export default function useWebRTC(channelId, inCall) {
       if (!pc) { WARN('  No PC found!'); return; }
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
-        pc.scrapeReceivers();
         D(`  Remote description set successfully. signalingState=${pc.signalingState}`);
       } catch (err) {
         WARN('  setRemoteDescription(answer) failed:', err.message);
@@ -600,7 +609,6 @@ export default function useWebRTC(channelId, inCall) {
   return {
     localStream,
     remoteStreams,
-    remoteStreamVersion,
     isCameraOn,
     isMicOn,
     isScreenSharing,

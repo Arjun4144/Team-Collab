@@ -42,6 +42,15 @@ router.post('/login', async (req, res) => {
     if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+    // Safety guard: normalize legacy avatar before save to prevent MongoDB sub-path update crashes
+    if (typeof user.avatar === 'string' || user.avatar === null || user.avatar === undefined) {
+      const avatarObj = { 
+        url: (typeof user.avatar === 'string' && user.avatar.startsWith('http')) ? user.avatar : '', 
+        public_id: '' 
+      };
+      await User.updateOne({ _id: user._id }, { $set: { avatar: avatarObj } });
+      user.avatar = avatarObj;
+    }
     user.status = 'online';
     await user.save();
     const token = signToken(user._id);

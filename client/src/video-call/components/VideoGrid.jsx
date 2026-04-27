@@ -9,7 +9,9 @@ function VideoTile({ stream, label, isLocal, isCameraOn, isMicOn, isScreenSharin
     el.srcObject = stream ? stream : null;
   }, [stream]);
 
-  const displayVideo = isCameraOn || isScreenSharing;
+  // For remote peers: also detect video from live tracks (fallback when media state hasn't arrived)
+  const hasLiveVideoTrack = !isLocal && stream && stream.getVideoTracks().some(t => t.readyState === 'live' && t.enabled);
+  const displayVideo = isCameraOn || isScreenSharing || hasLiveVideoTrack;
 
   return (
     <div style={{ ...styles.tile, ...(isActiveSpeaker ? styles.tileActive : {}) }}>
@@ -17,7 +19,7 @@ function VideoTile({ stream, label, isLocal, isCameraOn, isMicOn, isScreenSharin
         ref={videoRef}
         autoPlay
         playsInline
-        muted={!isMicOn || isLocal}
+        muted={isLocal}
         style={{
           ...styles.video,
           ...(isLocal && !isScreenSharing ? styles.videoMirrored : {}),
