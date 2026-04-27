@@ -22,17 +22,26 @@ const { initVideoCallSocket } = require('./socket/videoCallHandler');
 const app = express();
 const server = http.createServer(app);
 
-const ALLOWED_ORIGIN = process.env.CLIENT_URL || 'http://localhost:3000';
+// Support multiple frontend origins for dev + production
+const ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  process.env.CLIENT_URL
+].filter(Boolean);
 
 const io = new Server(server, {
-  cors: { origin: ALLOWED_ORIGIN, methods: ['GET', 'POST'] }
+  cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'], credentials: true }
 });
 
-app.use(cors({ origin: ALLOWED_ORIGIN }));
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json({ limit: '1mb' }));
 app.set('io', io);
 app.set('onlineUsers', onlineUsers);
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
+
+// Serve uploaded files statically (for backward compatibility with /uploads URLs)
+const uploadsPath = require('path').join(__dirname, 'uploads');
+if (!require('fs').existsSync(uploadsPath)) require('fs').mkdirSync(uploadsPath, { recursive: true });
+app.use('/uploads', express.static(uploadsPath));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/workspaces', workspaceRoutes);

@@ -347,7 +347,9 @@ export default function MessageBubble({ message, onReply }) {
         {/* Audio player — voice notes */}
         {message.messageType === 'audio' && message.attachments?.[0] && (() => {
           const att = message.attachments[0];
-          const actualUrl = att.url?.startsWith('/uploads/') ? att.url : (att.url?.startsWith('blob:') ? att.url : `/uploads/${att.url}`);
+          // Support full URLs (Cloudinary) and legacy /uploads/ paths
+          const isFullUrl = att.url?.startsWith('http://') || att.url?.startsWith('https://') || att.url?.startsWith('blob:');
+          const actualUrl = isFullUrl ? att.url : (att.url?.startsWith('/uploads/') ? `https://team-collab-ntlm.onrender.com${att.url}` : `https://team-collab-ntlm.onrender.com/uploads/${att.url}`);
           const audioUrl = actualUrl;
           return <AudioPlayer audioUrl={audioUrl} duration={message.audioDuration || 0} isOwn={isOwn} />;
         })()}
@@ -365,8 +367,9 @@ export default function MessageBubble({ message, onReply }) {
               const isImage = att.type?.startsWith('image/');
               const isAudio = att.type?.startsWith('audio/');
               if (isAudio) return null; // handled by AudioPlayer
-              const actualUrl = att.url?.startsWith('/uploads/') ? att.url : `/uploads/${att.url}`;
-              const fileUrl = actualUrl;
+              // Support full URLs (Cloudinary) and legacy /uploads/ paths
+              const isFullUrl = att.url?.startsWith('http://') || att.url?.startsWith('https://');
+              const fileUrl = isFullUrl ? att.url : (att.url?.startsWith('/uploads/') ? `https://team-collab-ntlm.onrender.com${att.url}` : `https://team-collab-ntlm.onrender.com/uploads/${att.url}`);
               return (
                 <div key={i} style={styles.attachment}>
                   {isImage ? (

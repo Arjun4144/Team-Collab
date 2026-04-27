@@ -11,16 +11,7 @@ const path = require('path');
 const fs = require('fs');
 const { generateSummary } = require('../utils/gemini');
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = path.join(__dirname, '../uploads');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname));
-  }
-});
+const storage = multer.memoryStorage();
 
 const ALLOWED_MIME_TYPES = [
   'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
@@ -43,6 +34,25 @@ const upload = multer({
     }
   }
 });
+
+// Helper: upload buffer to Cloudinary with resource_type auto
+const uploadBufferToCloudinary = (buffer, originalname) => {
+  const cloudinary = require('../config/cloudinary');
+  return new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: 'nexus_attachments',
+        resource_type: 'auto',
+        public_id: `${Date.now()}-${Math.round(Math.random() * 1E9)}`,
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve({ url: result.secure_url, public_id: result.public_id });
+      }
+    );
+    uploadStream.end(buffer);
+  });
+};
 
 router.get('/channel/:channelId', auth, async (req, res) => {
   try {
@@ -229,17 +239,17 @@ router.post('/channel/:channelId/upload', auth, upload.single('file'), async (re
     // Verify membership
     const ch = await Channel.findById(req.params.channelId);
     if (!ch) {
-      if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       return res.status(404).json({ error: 'Channel not found' });
     }
     const isMember = ch.members.some(m => m.toString() === req.user._id.toString());
     if (!isMember) {
-      if (req.file.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
       return res.status(403).json({ error: 'You are not a member of this channel' });
     }
 
-    const fileUrl = `/uploads/${req.file.filename}`;
-    const filename = req.file.originalname || req.file.filename;
+    // Upload to Cloudinary
+    const cloudResult = await uploadBufferToCloudinary(req.file.buffer, req.file.originalname);
+    const fileUrl = cloudResult.url; // Full https://res.cloudinary.com/... URL
+    const filename = req.file.originalname || 'file';
     const size = req.file.size || 0;
     
     res.status(201).json({
@@ -291,9 +301,11 @@ router.delete('/:id/everyone', auth, async (req, res) => {
     const isSender = message.sender.toString() === req.user._id.toString();
     if (!isAdmin && !isSender) return res.status(403).json({ error: 'Only admins or the sender can delete messages for everyone' });
     
-    // If it has attachments, delete from disk
+    // If it has attachments, delete from disk (only for legacy local files, not Cloudinary)
     if (message.attachments && message.attachments.length > 0) {
       message.attachments.forEach(att => {
+        // Skip Cloudinary URLs — they don't live on disk
+        if (att.url && (att.url.startsWith('http://') || att.url.startsWith('https://'))) return;
         const actualFilename = att.url.startsWith('/uploads/') ? att.url.split('/').pop() : att.url;
         const filePath = path.join(__dirname, '../uploads', actualFilename);
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);

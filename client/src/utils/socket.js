@@ -4,15 +4,16 @@ let socket = null;
 
 export const getSocket = () => socket;
 
-// In dev mode CRA proxy doesn't reliably forward WebSocket upgrades,
-// so connect directly to the server origin.
-const SOCKET_URL =
-  process.env.NODE_ENV === 'development' ? `http://${window.location.hostname}:5000` : '/';
+// Always connect to the deployed backend.
+// Must match the Axios baseURL origin for consistency.
+const SOCKET_URL = 'https://team-collab-ntlm.onrender.com';
 
 export const initSocket = (token) => {
   if (socket) socket.disconnect();
   socket = io(SOCKET_URL, {
     auth: { token },
+    withCredentials: true,
+    transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionAttempts: 10
@@ -20,6 +21,8 @@ export const initSocket = (token) => {
 
   socket.on('connect', () => console.log('[socket] connected:', socket.id));
   socket.on('connect_error', (err) => console.error('[socket] connect error:', err.message));
+  // Debug: log ALL incoming events (remove in production)
+  socket.onAny((event, ...args) => console.log('[socket event]', event, args));
 
   return socket;
 };
