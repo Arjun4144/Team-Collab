@@ -12,7 +12,7 @@ import DecisionsPanel from '../components/decisions/DecisionsPanel';
 import MembersPanel from '../components/layout/MembersPanel';
 
 export default function WorkspacePage() {
-  const { token, user, setUser, fetchWorkspaces, fetchTasks, fetchDecisions, fetchUsers, rightPanel, activeThread, toast, activeWorkspace, activeChannel, setToast, selectWorkspace, selectChannel } = useStore();
+  const { token, user, setUser, workspaces, fetchWorkspaces, fetchTasks, fetchDecisions, fetchUsers, rightPanel, activeThread, toast, activeWorkspace, activeChannel, setToast, selectWorkspace, selectChannel } = useStore();
   const [socket, setSocket] = useState(null);
   const [initialized, setInitialized] = useState(false);
   const { workspaceId: urlWorkspaceId, channelId: urlChannelId } = useParams();
@@ -168,18 +168,46 @@ export default function WorkspacePage() {
 
       {/* Toast Notification */}
       {toast && (
-        <div style={{...styles.toast, cursor: toast.channelId ? 'pointer' : 'default'}} onClick={() => {
+        <div style={{...styles.toast, cursor: toast.channelId ? 'pointer' : 'default'}} onClick={async () => {
+          if (toast.workspaceId) {
+            const ws = workspaces.find(w => w._id === toast.workspaceId);
+            if (ws && ws._id !== activeWorkspace?._id) await selectWorkspace(ws);
+          }
           if (toast.channelId) {
             const ch = wsChannels.find(c => c._id === toast.channelId);
-            if (ch) useStore.getState().selectChannel(ch);
-            setTimeout(() => {
-              const el = document.getElementById(`msg-${toast.messageId}`);
-              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }, 300);
+            if (ch && ch._id !== activeChannel?._id) await useStore.getState().selectChannel(ch);
+            if (toast.type === 'task_assigned') {
+              if (!useStore.getState().tasks.some(t => String(t._id) === String(toast.messageId))) {
+                useStore.getState().showToast('Task no longer available');
+                setToast(null);
+                return;
+              }
+              useStore.getState().setRightPanel('tasks');
+            } else {
+              setTimeout(() => {
+                const el = document.getElementById(`msg-${toast.messageId}`);
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  el.style.transition = 'background-color 0.3s ease';
+                  const oldBg = el.style.backgroundColor;
+                  el.style.backgroundColor = 'var(--bg-active)';
+                  setTimeout(() => { el.style.backgroundColor = oldBg; }, 2000);
+                } else {
+                  useStore.getState().showToast('Message not found');
+                }
+              }, 300);
+            }
+          }
+          if (toast.notifId) {
+            import('../utils/api').then(({ default: api }) => {
+              api.post('/notifications/mark-read', { notifIds: [toast.notifId] }).catch(() => {});
+            });
+            // eagerly update store
+            const store = useStore.getState();
+            store.setNotifications(store.notifications.map(n => n._id === toast.notifId ? { ...n, isRead: true } : n));
           }
           setToast(null);
         }}>
-          <span style={styles.toastIcon}>🔔</span>
           <span style={styles.toastText}>{toast.message || toast}</span>
         </div>
       )}

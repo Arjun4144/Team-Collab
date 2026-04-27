@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../../store/useStore';
 import { getInitials, statusConfig } from '../../utils/helpers';
 import api from '../../utils/api';
+import NotificationBell from './NotificationBell';
 
 const ChannelRow = ({ ch, onRename, onDelete, isWsAdmin }) => {
   const { user, activeChannel, selectChannel, clearChannelMessages, showToast } = useStore();
@@ -271,6 +272,7 @@ export default function Sidebar() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
             <div style={styles.wsLabel}>Nexus</div>
           </div>
+          <NotificationBell />
         </div>
       </div>
 
@@ -293,7 +295,7 @@ export default function Sidebar() {
         </div>
 
         <nav style={styles.navIcons}>
-          {[{ id: 'tasks', icon: '⚡', label: 'Tasks' }, { id: 'decisions', icon: '✅', label: 'Decisions' }, { id: 'all_users', icon: '👥', label: 'All Users' }].map(({ id, icon, label }) => (
+          {[{ id: 'decisions', icon: '✅', label: 'Decisions' }, { id: 'all_users', icon: '👥', label: 'All Users' }].map(({ id, icon, label }) => (
             <button key={id} title={label} onClick={() => setRightPanel(id)} style={{ ...styles.navBtn, ...(rightPanel === id ? styles.navBtnActive : {}) }}>
               <span style={{ fontSize: 16 }}>{icon}</span>
             </button>

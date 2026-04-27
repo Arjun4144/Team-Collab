@@ -44,7 +44,7 @@ const DropdownItem = ({ action, active, onClick }) => {
 };
 
 export default function ChannelHeader() {
-  const { activeChannel, activeWorkspace, setRightPanel, rightPanel, users, user } = useStore();
+  const { activeChannel, activeWorkspace, setRightPanel, rightPanel, users, user, tasks } = useStore();
   const width = useWindowWidth();
   const [showOverflow, setShowOverflow] = useState(false);
   const overflowRef = useRef(null);
@@ -54,6 +54,14 @@ export default function ChannelHeader() {
   const [wsMenuOpen, setWsMenuOpen] = useState(false);
   const wsMenuRef = useRef(null);
   useOnClickOutside(wsMenuRef, () => setWsMenuOpen(false));
+
+  const lastSeenTasks = parseInt(localStorage.getItem('nexus_lastSeenTasks') || '0', 10);
+
+  const unseenTasks = (tasks || []).filter(t => 
+    (t.assignee?._id === user?._id || t.assignee === user?._id) && 
+    new Date(t.updatedAt).getTime() > lastSeenTasks &&
+    t.status !== 'done'
+  ).length;
 
   if (!activeChannel) return null;
 
@@ -68,7 +76,7 @@ export default function ChannelHeader() {
   const myRole = isWsOwner ? 'Owner' : ((isWsAdmin || isChAdmin) ? 'Admin' : 'Member');
 
   const ALL_ACTIONS = [
-    { id: 'tasks', label: '⚡ Tasks' },
+    { id: 'tasks', label: `⚡ Tasks ${unseenTasks > 0 ? `(${unseenTasks})` : ''}` },
     { id: 'decisions', label: '✅ Decisions' },
     { id: 'members', label: '👥 Workspace Members' }
   ];
@@ -86,6 +94,9 @@ export default function ChannelHeader() {
   }
 
   const handleActionClick = (id) => {
+    if (id === 'tasks') {
+      localStorage.setItem('nexus_lastSeenTasks', Date.now().toString());
+    }
     setRightPanel(id);
     setShowOverflow(false);
   };

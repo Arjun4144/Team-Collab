@@ -15,7 +15,21 @@ const useStore = create((set, get) => ({
     localStorage.removeItem('nexus_token');
     localStorage.removeItem('nexus_last_workspace');
     localStorage.removeItem('nexus_last_channel');
-    set({ user: null, token: null, workspaces: [], channels: {}, messages: {}, summaries: {}, activeWorkspace: null, activeChannel: null });
+    set({ user: null, token: null, workspaces: [], channels: {}, messages: {}, summaries: {}, notifications: [], activeWorkspace: null, activeChannel: null });
+  },
+
+  // Notifications
+  notifications: [],
+  setNotifications: (notifications) => set({ notifications }),
+  addNotification: (notif) => set(s => ({ notifications: [notif, ...s.notifications] })),
+  removeNotification: (id) => set(s => ({ notifications: s.notifications.filter(n => n._id !== id) })),
+  markAllNotificationsRead: () => set(s => ({ notifications: s.notifications.map(n => ({ ...n, isRead: true })) })),
+  clearNotifications: () => set({ notifications: [] }),
+  fetchNotifications: async () => {
+    try {
+      const { data } = await api.get('/notifications');
+      set({ notifications: data });
+    } catch {}
   },
 
   // Workspaces
@@ -345,7 +359,10 @@ const useStore = create((set, get) => ({
   // Tasks
   tasks: [],
   setTasks: (tasks) => set({ tasks }),
-  addTask: (task) => set(s => ({ tasks: [task, ...s.tasks] })),
+  addTask: (task) => set(s => {
+    if (s.tasks.some(t => t._id === task._id)) return s;
+    return { tasks: [task, ...s.tasks] };
+  }),
   updateTask: (updated) => set(s => ({
     tasks: s.tasks.map(t => t._id === updated._id ? updated : t)
   })),
@@ -375,6 +392,8 @@ const useStore = create((set, get) => ({
   },
   rightPanel: null, // 'tasks' | 'decisions' | 'members'
   setRightPanel: (panel) => set(s => ({ rightPanel: s.rightPanel === panel ? null : panel })),
+  taskDraft: null,
+  setTaskDraft: (draft) => set({ taskDraft: draft }),
   activeThread: null,
   setActiveThread: (msg) => set({ activeThread: msg }),
   replyingTo: null,

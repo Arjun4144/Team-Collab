@@ -23,6 +23,7 @@ function initSocket(io) {
 
   io.on('connection', (socket) => {
     const userId = socket.user._id.toString();
+    socket.join(userId);
     onlineUsers.set(userId, socket.id);
     // Update DB status so fetchUsers() returns accurate data
     User.findByIdAndUpdate(userId, { status: 'online' }).catch(() => {});

@@ -176,7 +176,7 @@ const dlStyles = {
 };
 
 export default function MessageBubble({ message, onReply }) {
-  const { user, updateMessage, setActiveThread, setReplyingTo, hideMessage, activeChannel, deleteMessageForEveryone, messages } = useStore();
+  const { user, updateMessage, setActiveThread, setReplyingTo, hideMessage, activeChannel, deleteMessageForEveryone, messages, setTaskDraft, setRightPanel } = useStore();
   const [showVerdict, setShowVerdict] = useState(false);
   const [verdict, setVerdict] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
@@ -441,32 +441,39 @@ export default function MessageBubble({ message, onReply }) {
             
             {showDropdown && createPortal(
               <div ref={dropdownRef} style={{ ...styles.dropdownMenu, top: dropdownPos.top, bottom: dropdownPos.bottom, left: dropdownPos.left, right: dropdownPos.right }}>
-                <button className="dropdown-item" onClick={() => { setReplyingTo(message); setShowDropdown(false); setActiveThread(null); }} style={styles.dropdownItem}>Reply</button>
-                
-                {canEditPriority && !isUrgent && (
-                  <button className="dropdown-item" onClick={() => handleUpdatePriority('urgent')} style={styles.dropdownItem}>Mark as urgent</button>
-                )}
-                {canEditPriority && isUrgent && (
-                  <button className="dropdown-item" onClick={() => handleUpdatePriority('normal')} style={styles.dropdownItem}>Remove urgent</button>
-                )}
-
-                {!message.isResolved && message.intentType === 'discussion' && !isOwn && (
-                  <button className="dropdown-item" onClick={() => { setShowVerdict(v => !v); setShowDropdown(false); }} style={styles.dropdownItem}>Resolve</button>
-                )}
-                {!message.isResolved && ['decision','action'].includes(message.intentType) && (
-                  <button className="dropdown-item" onClick={() => { setShowVerdict(v => !v); setShowDropdown(false); }} style={styles.dropdownItem}>Close</button>
-                )}
-                
-                <button className="dropdown-item"
-                  onClick={() => { hideMessage(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
-                  style={styles.dropdownItem}
-                >Delete for me</button>
-                
-                {(isAdmin || isOwn) && !message.isTemp && (
+                {message.isDeleted ? (
                   <button className="dropdown-item"
-                    onClick={() => { deleteMessageForEveryone(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
-                    style={{ ...styles.dropdownItem, color: '#ef4444' }}
-                  >Delete for everyone</button>
+                    onClick={() => { hideMessage(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
+                    style={styles.dropdownItem}
+                  >Delete for me</button>
+                ) : (
+                  <>
+                    <button className="dropdown-item" onClick={() => { setReplyingTo(message); setShowDropdown(false); setActiveThread(null); }} style={styles.dropdownItem}>Reply</button>
+                    <button className="dropdown-item" onClick={() => { 
+                      setTaskDraft({ title: message.content, sourceMessage: message._id }); 
+                      setRightPanel('tasks'); 
+                      setShowDropdown(false); 
+                    }} style={styles.dropdownItem}>Create Task</button>
+                    
+                    {canEditPriority && !isUrgent && (
+                      <button className="dropdown-item" onClick={() => handleUpdatePriority('urgent')} style={styles.dropdownItem}>Mark as urgent</button>
+                    )}
+                    {canEditPriority && isUrgent && (
+                      <button className="dropdown-item" onClick={() => handleUpdatePriority('normal')} style={styles.dropdownItem}>Remove urgent</button>
+                    )}
+
+                    <button className="dropdown-item"
+                      onClick={() => { hideMessage(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
+                      style={styles.dropdownItem}
+                    >Delete for me</button>
+                    
+                    {(isAdmin || isOwn) && !message.isTemp && (
+                      <button className="dropdown-item"
+                        onClick={() => { deleteMessageForEveryone(message.channel?._id || message.channel, message._id); setShowDropdown(false); }} 
+                        style={{ ...styles.dropdownItem, color: '#ef4444' }}
+                      >Delete for everyone</button>
+                    )}
+                  </>
                 )}
               </div>,
               document.body

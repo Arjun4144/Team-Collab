@@ -9,9 +9,10 @@ const path = require('path');
 
 const authRoutes = require('./routes/auth');
 const workspaceRoutes = require('./routes/workspaces');
-const channelRoutes = require('./routes/channels');
-const messageRoutes = require('./routes/messages');
-const taskRoutes = require('./routes/tasks');
+const channelsRouter = require('./routes/channels');
+const messagesRouter = require('./routes/messages');
+const tasksRouter = require('./routes/tasks');
+const notificationsRouter = require('./routes/notifications');
 const decisionRoutes = require('./routes/decisions');
 const userRoutes = require('./routes/users');
 const { initSocket, onlineUsers } = require('./socket/socketHandler');
@@ -33,9 +34,10 @@ app.use(morgan('dev'));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/workspaces', workspaceRoutes);
-app.use('/api/channels', channelRoutes);
-app.use('/api/messages', messageRoutes);
-app.use('/api/tasks', taskRoutes);
+app.use('/api/channels', channelsRouter);
+app.use('/api/messages', messagesRouter);
+app.use('/api/tasks', tasksRouter);
+app.use('/api/notifications', notificationsRouter);
 app.use('/api/decisions', decisionRoutes);
 app.use('/api/users', userRoutes);
 

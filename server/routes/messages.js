@@ -4,6 +4,7 @@ const Channel = require('../models/Channel');
 const Task = require('../models/Task');
 const Decision = require('../models/Decision');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 const { auth } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
@@ -132,22 +133,24 @@ router.post('/', auth, async (req, res) => {
         );
         
         const io = req.app.get('io');
-        const onlineUsers = req.app.get('onlineUsers');
         
-        mentionedUsers.forEach(u => {
-          // Only notify if they are a member of the channel AND not the sender
+        for (const u of mentionedUsers) {
           const isUserMember = ch.members.some(memberId => memberId.toString() === u._id.toString());
           if (isUserMember && u._id.toString() !== req.user._id.toString()) {
-            const socketId = onlineUsers.get(u._id.toString());
-            if (socketId && io) {
-              io.to(socketId).emit('notification:mention', {
-                message: `${req.user.name} mentioned you in a message`,
+            try {
+              const notif = await Notification.create({
+                userId: u._id,
+                type: 'mention',
+                title: 'New Mention',
+                body: `You were mentioned by ${req.user.name}`,
+                workspaceId: ch.workspaceId,
                 channelId: channel,
-                messageId: message._id
+                referenceId: message._id
               });
-            }
+              if (io) io.to(u._id.toString()).emit('notification:new', notif);
+            } catch (err) { console.error('Error creating mention notification', err); }
           }
-        });
+        }
       }
     }
 

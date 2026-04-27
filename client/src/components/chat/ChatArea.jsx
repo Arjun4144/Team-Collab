@@ -18,6 +18,18 @@ const setLastSeen = (chId) => {
 
 const EMPTY_MESSAGES = [];
 
+const formatDateLabel = (dateStr) => {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) return 'Today';
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }); // DD MMM YYYY
+};
+
 export default function ChatArea() {
   const activeChannel = useStore(s => s.activeChannel);
   const user = useStore(s => s.user);
@@ -266,7 +278,7 @@ export default function ChatArea() {
       {showSummaryCard && (
         <div style={s.summaryCard}>
           <div style={s.summaryHead}>
-            <span style={s.summaryLabel}>✦ Summary</span>
+            <span style={s.summaryLabel}>✨ Summary</span>
             <button onClick={dismiss} style={s.closeBtn}>✕</button>
           </div>
           <div style={s.summaryBody}>{activeSummary.text}</div>
@@ -286,7 +298,23 @@ export default function ChatArea() {
         {chMsgs.length === 0 && (
           <div style={s.noMessages}>No messages yet in <strong>#{activeChannel.name}</strong>. Start the conversation.</div>
         )}
-        {chMsgs.map(msg => <MessageBubble key={msg._id} message={msg} />)}
+        {chMsgs.map((msg, index) => {
+          const prevMsg = index > 0 ? chMsgs[index - 1] : null;
+          const currentLabel = formatDateLabel(msg.createdAt);
+          const prevLabel = prevMsg ? formatDateLabel(prevMsg.createdAt) : null;
+          const showDateSeparator = currentLabel && currentLabel !== prevLabel;
+
+          return (
+            <React.Fragment key={msg._id}>
+              {showDateSeparator && (
+                <div style={s.dateSeparator}>
+                  <span style={s.dateSeparatorText}>{currentLabel}</span>
+                </div>
+              )}
+              <MessageBubble message={msg} />
+            </React.Fragment>
+          );
+        })}
         <div ref={bottomRef} />
       </div>
 
@@ -301,7 +329,7 @@ export default function ChatArea() {
       {showCta && (
         <div style={s.ctaContainer}>
           <button onClick={handleSummarize} disabled={loading} style={s.ctaPillInner}>
-            <span style={{ fontSize: 14 }}>✦</span>
+            <span style={{ fontSize: 14 }}>✨</span>
             Summarize {unreadCount} unread
           </button>
           <button onClick={dismissCta} style={s.ctaDismissBtn} title="Dismiss">✕</button>
@@ -312,7 +340,7 @@ export default function ChatArea() {
       {activeSummary && activeSummary.hidden && !loading && !summaryDismissed && (
         <div style={s.ctaContainer}>
           <button onClick={reopenSummary} style={s.ctaPillInner}>
-            <span style={{ fontSize: 14 }}>⚡</span> View Summary
+            <span style={{ fontSize: 14 }}>✨</span> View Summary
           </button>
           <button onClick={dismissCta} style={s.ctaDismissBtn} title="Dismiss">✕</button>
         </div>
@@ -356,6 +384,13 @@ const s = {
   // Typing
   typingTop: { position: 'absolute', top: 50, left: 0, right: 0, background: 'rgba(var(--bg-surface-rgb), 0.85)', backdropFilter: 'blur(4px)', padding: '6px 20px', zIndex: 10, borderBottom: '1px solid var(--border)', animation: 'slideDown 0.2s ease-out' },
   typingText: { fontSize: 12, color: 'var(--accent)', fontWeight: 600 },
+  // Date Separators
+  dateSeparator: { display: 'flex', justifyContent: 'center', margin: '20px 0 10px', position: 'relative' },
+  dateSeparatorText: { 
+    background: 'var(--bg-elevated)', border: '1px solid var(--border)', 
+    padding: '4px 12px', borderRadius: 16, fontSize: 11, fontWeight: 600, 
+    color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' 
+  },
   // New messages
   newMsgBtn: {
     position: 'absolute', bottom: 130, left: '50%', transform: 'translateX(-50%)',

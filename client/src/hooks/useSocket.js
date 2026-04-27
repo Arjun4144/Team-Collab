@@ -69,6 +69,8 @@ export const useSocket = (socket) => {
       state.softDeleteMessage(channelId, data._id);
     };
     const onTaskUp     = (task) => useStore.getState().updateTask(task);
+    const onTaskNew    = (task) => useStore.getState().addTask(task);
+    const onTaskDeleted = (data) => useStore.getState().removeTask(data.taskId);
     const onDecision   = (d)   => useStore.getState().addDecision(d);
     const onTypingStart = ({ userId, userName, channelId }) => {
       useStore.getState().setTyping(channelId, userId, userName, true);
@@ -91,6 +93,26 @@ export const useSocket = (socket) => {
           useStore.getState().setToast(null);
         }
       }, 5000);
+    };
+
+    const onNotificationNew = (notif) => {
+      useStore.getState().addNotification(notif);
+      useStore.getState().setToast({ message: notif.body, channelId: notif.channelId, messageId: notif.referenceId, type: notif.type, workspaceId: notif.workspaceId, notifId: notif._id });
+      setTimeout(() => { const t = useStore.getState().toast; if(t && t.messageId === notif.referenceId) useStore.getState().setToast(null); }, 5000);
+    };
+
+    const onNotificationCleared = () => {
+      useStore.getState().clearNotifications();
+    };
+    const onNotificationDeleted = (id) => {
+      useStore.getState().removeNotification(id);
+    };
+    const onNotificationReadAll = () => {
+      useStore.getState().markAllNotificationsRead();
+    };
+    const onNotificationReadSome = (notifIds) => {
+      const store = useStore.getState();
+      store.setNotifications(store.notifications.map(n => notifIds.includes(n._id) ? { ...n, isRead: true } : n));
     };
 
     const onChannelUpdated = () => {
@@ -267,6 +289,8 @@ export const useSocket = (socket) => {
     socket.on('replyDeleted', onReplyDeleted);
     socket.on('message:deleted',  onMessageDeleted);
     socket.on('task:updated',     onTaskUp);
+    socket.on('task:new',         onTaskNew);
+    socket.on('task:deleted',     onTaskDeleted);
     socket.on('decision:new',     onDecision);
     socket.on('typing:start',     onTypingStart);
     socket.on('typing:stop',      onTypingStop);
@@ -281,6 +305,11 @@ export const useSocket = (socket) => {
     socket.on('workspace:userRemoved', onWorkspaceUserRemoved);
     socket.on('workspace:userJoined', onWorkspaceUserJoined);
     socket.on('workspace:userRoleUpdated', onWorkspaceUserRoleUpdated);
+    socket.on('notification:new', onNotificationNew);
+    socket.on('notification:cleared', onNotificationCleared);
+    socket.on('notification:deleted', onNotificationDeleted);
+    socket.on('notification:read_all', onNotificationReadAll);
+    socket.on('notification:read_some', onNotificationReadSome);
 
     return () => {
       socket.off('connect',          onConnect);
@@ -291,6 +320,8 @@ export const useSocket = (socket) => {
       socket.off('replyDeleted', onReplyDeleted);
       socket.off('message:deleted',  onMessageDeleted);
       socket.off('task:updated',     onTaskUp);
+      socket.off('task:new',         onTaskNew);
+      socket.off('task:deleted',     onTaskDeleted);
       socket.off('decision:new',     onDecision);
       socket.off('typing:start',     onTypingStart);
       socket.off('typing:stop',      onTypingStop);
@@ -305,6 +336,11 @@ export const useSocket = (socket) => {
       socket.off('workspace:userRemoved', onWorkspaceUserRemoved);
       socket.off('workspace:userJoined', onWorkspaceUserJoined);
       socket.off('workspace:userRoleUpdated', onWorkspaceUserRoleUpdated);
+      socket.off('notification:new', onNotificationNew);
+      socket.off('notification:cleared', onNotificationCleared);
+      socket.off('notification:deleted', onNotificationDeleted);
+      socket.off('notification:read_all', onNotificationReadAll);
+      socket.off('notification:read_some', onNotificationReadSome);
     };
   }, [socket]);
 };
