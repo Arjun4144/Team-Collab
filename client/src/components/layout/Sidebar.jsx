@@ -335,6 +335,13 @@ export default function Sidebar() {
             <span style={styles.chPrefix}>🏠</span>
             <span style={styles.chName}>Home</span>
           </button>
+          <button onClick={() => {
+            const meetingId = `meet-${Math.random().toString(36).substr(2, 4)}-${Math.random().toString(36).substr(2, 4)}`;
+            window.open(`/meet/${meetingId}`, '_blank');
+          }} style={{ ...styles.channelItem, paddingLeft: 12, marginTop: 4 }}>
+            <span style={styles.chPrefix}>📹</span>
+            <span style={styles.chName}>New Meeting</span>
+          </button>
         </div>
 
         <nav style={styles.navIcons}>

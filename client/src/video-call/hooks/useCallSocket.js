@@ -7,14 +7,14 @@ import { useEffect, useRef, useCallback, useState } from 'react';
 import { getSocket } from '../../utils/socket';
 import callService from '../services/callService';
 
-export default function useCallSocket(channelId) {
+export default function useCallSocket(meetingId) {
   const [activeCall, setActiveCall] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [peerMediaStates, setPeerMediaStates] = useState({}); // { userId: { isCameraOn, isMicOn } }
   const listenersAttached = useRef(false);
-  const currentChannelRef = useRef(channelId);
+  const currentMeetingRef = useRef(meetingId);
 
-  currentChannelRef.current = channelId;
+  currentMeetingRef.current = meetingId;
 
   // Attach listeners once
   useEffect(() => {
@@ -23,22 +23,22 @@ export default function useCallSocket(channelId) {
     listenersAttached.current = true;
 
     const onCallActive = (data) => {
-      if (data.channelId === currentChannelRef.current) {
+      if (data.meetingId === currentMeetingRef.current) {
         setActiveCall(data);
         callService.setState({ activeCallInfo: data });
       }
     };
 
     const onCallEnded = (data) => {
-      if (data.channelId === currentChannelRef.current) {
+      if (data.meetingId === currentMeetingRef.current) {
         setActiveCall(null);
-        callService.setState({ activeCallInfo: null, inCall: false, channelId: null, participants: [] });
+        callService.setState({ activeCallInfo: null, inCall: false, meetingId: null, participants: [] });
         setChatMessages([]);
       }
     };
 
     const onCallParticipants = (data) => {
-      if (data.channelId === currentChannelRef.current) {
+      if (data.meetingId === currentMeetingRef.current) {
         callService.setState({ participants: data.participants });
         if (data.chatHistory) {
           setChatMessages(data.chatHistory);
@@ -76,50 +76,42 @@ export default function useCallSocket(channelId) {
     };
   }, []);
 
-  // Check for active call when channel changes
+  // Check for active call when meeting changes
   useEffect(() => {
     const socket = getSocket();
-    if (socket && channelId) {
-      socket.emit('call:check', { channelId });
+    if (socket && meetingId) {
+      socket.emit('call:check', { meetingId });
     }
-    // Reset state on channel switch
+    // Reset state on switch
     setActiveCall(null);
     setChatMessages([]);
     setPeerMediaStates({});
-  }, [channelId]);
-
-  const startCall = useCallback(() => {
-    const socket = getSocket();
-    if (!socket || !channelId) return;
-    callService.setState({ inCall: true, channelId });
-    socket.emit('call:start', { channelId });
-  }, [channelId]);
+  }, [meetingId]);
 
   const joinCall = useCallback(() => {
     const socket = getSocket();
-    if (!socket || !channelId) return;
-    callService.setState({ inCall: true, channelId });
-    socket.emit('call:join', { channelId });
-  }, [channelId]);
+    if (!socket || !meetingId) return;
+    callService.setState({ inCall: true, meetingId });
+    socket.emit('call:join', { meetingId });
+  }, [meetingId]);
 
   const leaveCall = useCallback(() => {
     const socket = getSocket();
-    if (!socket || !channelId) return;
-    socket.emit('call:leave', { channelId });
-    callService.setState({ inCall: false, channelId: null, participants: [] });
-  }, [channelId]);
+    if (!socket || !meetingId) return;
+    socket.emit('call:leave', { meetingId });
+    callService.setState({ inCall: false, meetingId: null, participants: [] });
+  }, [meetingId]);
 
   const sendChatMessage = useCallback((text) => {
     const socket = getSocket();
-    if (!socket || !channelId || !text.trim()) return;
-    socket.emit('call:chat-message', { channelId, text: text.trim() });
-  }, [channelId]);
+    if (!socket || !meetingId || !text.trim()) return;
+    socket.emit('call:chat-message', { meetingId, text: text.trim() });
+  }, [meetingId]);
 
   return {
     activeCall,
     chatMessages,
     peerMediaStates,
-    startCall,
     joinCall,
     leaveCall,
     sendChatMessage

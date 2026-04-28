@@ -1,27 +1,24 @@
 /**
- * Video Call Socket Handler — Isolated module for channel-based video calls.
- * All events are prefixed with "call:" or "webrtc:" to avoid conflicts.
- * Does NOT interact with any existing chat socket logic.
+ * Meeting Socket Handler — Isolated module for standalone Google Meet style meetings.
  */
 
-// In-memory store: { channelId: { participants: Map<socketId, { userId, userName }>, chatMessages: [] } }
-const activeCalls = new Map();
+// In-memory store: { meetingId: { participants: Map<socketId, { userId, userName }>, chatMessages: [] } }
+const activeMeetings = new Map();
 
 function initVideoCallSocket(io) {
-  // Use the same io instance but a namespaced approach via event prefixes
   io.on('connection', (socket) => {
     if (!socket.user) return; // Auth already handled by main socketHandler middleware
 
     const userId = socket.user._id.toString();
     const userName = socket.user.name || 'Unknown';
 
-    // ── call:start ─────────────────────────────────────────────
-    socket.on('call:start', ({ channelId }) => {
-      if (!channelId) return;
+    // ── call:join (also acts as start if first) ─────────────
+    socket.on('call:join', ({ meetingId }) => {
+      if (!meetingId) return;
 
       // Create session if none exists
-      if (!activeCalls.has(channelId)) {
-        activeCalls.set(channelId, {
+      if (!activeMeetings.has(meetingId)) {
+        activeMeetings.set(meetingId, {
           participants: new Map(),
           chatMessages: [],
           startedBy: userId,
@@ -29,61 +26,18 @@ function initVideoCallSocket(io) {
         });
       }
 
-      const session = activeCalls.get(channelId);
+      const session = activeMeetings.get(meetingId);
 
       // Prevent duplicate participant entries for the same user
       const alreadyIn = Array.from(session.participants.values()).some(p => p.userId === userId);
       if (alreadyIn) return;
 
       session.participants.set(socket.id, { userId, userName });
-      socket.join(`call:${channelId}`);
+      socket.join(`meeting:${meetingId}`);
 
-      // Notify everyone in the channel that a call is active
-      io.to(`channel:${channelId}`).emit('call:active', {
-        channelId,
-        participants: Array.from(session.participants.values()),
-        startedBy: session.startedBy
-      });
-
-      // Notify other call participants that someone new joined
-      socket.to(`call:${channelId}`).emit('call:user-joined', {
-        channelId,
-        socketId: socket.id,
-        userId,
-        userName
-      });
-
-      // Send existing participants list to the joiner
-      socket.emit('call:participants', {
-        channelId,
-        participants: Array.from(session.participants.entries()).map(([sid, p]) => ({
-          socketId: sid,
-          ...p
-        })),
-        chatHistory: session.chatMessages
-      });
-    });
-
-    // ── call:join ──────────────────────────────────────────────
-    socket.on('call:join', ({ channelId }) => {
-      if (!channelId) return;
-
-      const session = activeCalls.get(channelId);
-      if (!session) {
-        socket.emit('call:error', { message: 'No active call in this channel' });
-        return;
-      }
-
-      // Prevent duplicate
-      const alreadyIn = Array.from(session.participants.values()).some(p => p.userId === userId);
-      if (alreadyIn) return;
-
-      session.participants.set(socket.id, { userId, userName });
-      socket.join(`call:${channelId}`);
-
-      // Notify other call participants that someone new joined
-      socket.to(`call:${channelId}`).emit('call:user-joined', {
-        channelId,
+      // Notify other participants in the meeting that someone new joined
+      socket.to(`meeting:${meetingId}`).emit('call:user-joined', {
+        meetingId,
         socketId: socket.id,
         userId,
         userName
@@ -91,46 +45,39 @@ function initVideoCallSocket(io) {
 
       // Send existing participants and chat history to the new joiner
       socket.emit('call:participants', {
-        channelId,
+        meetingId,
         participants: Array.from(session.participants.entries()).map(([sid, p]) => ({
           socketId: sid,
           ...p
         })),
         chatHistory: session.chatMessages
       });
-
-      // Update everyone in the channel about the call state
-      io.to(`channel:${channelId}`).emit('call:active', {
-        channelId,
-        participants: Array.from(session.participants.values()),
-        startedBy: session.startedBy
-      });
     });
 
     // ── call:leave ─────────────────────────────────────────────
-    socket.on('call:leave', ({ channelId }) => {
-      handleLeaveCall(io, socket, channelId);
+    socket.on('call:leave', ({ meetingId }) => {
+      handleLeaveMeeting(socket, meetingId);
     });
 
     // ── call:check ─────────────────────────────────────────────
-    socket.on('call:check', ({ channelId }) => {
-      if (!channelId) return;
-      const session = activeCalls.get(channelId);
+    socket.on('call:check', ({ meetingId }) => {
+      if (!meetingId) return;
+      const session = activeMeetings.get(meetingId);
       if (session && session.participants.size > 0) {
         socket.emit('call:active', {
-          channelId,
+          meetingId,
           participants: Array.from(session.participants.values()),
           startedBy: session.startedBy
         });
       } else {
-        socket.emit('call:ended', { channelId });
+        socket.emit('call:ended', { meetingId });
       }
     });
 
     // ── WebRTC Signaling ───────────────────────────────────────
-    socket.on('webrtc:offer', ({ channelId, targetSocketId, offer }) => {
+    socket.on('webrtc:offer', ({ meetingId, targetSocketId, offer }) => {
       io.to(targetSocketId).emit('webrtc:offer', {
-        channelId,
+        meetingId,
         fromSocketId: socket.id,
         fromUserId: userId,
         fromUserName: userName,
@@ -138,29 +85,29 @@ function initVideoCallSocket(io) {
       });
     });
 
-    socket.on('webrtc:answer', ({ channelId, targetSocketId, answer }) => {
+    socket.on('webrtc:answer', ({ meetingId, targetSocketId, answer }) => {
       io.to(targetSocketId).emit('webrtc:answer', {
-        channelId,
+        meetingId,
         fromSocketId: socket.id,
         answer
       });
     });
 
-    socket.on('webrtc:ice-candidate', ({ channelId, targetSocketId, candidate }) => {
+    socket.on('webrtc:ice-candidate', ({ meetingId, targetSocketId, candidate }) => {
       io.to(targetSocketId).emit('webrtc:ice-candidate', {
-        channelId,
+        meetingId,
         fromSocketId: socket.id,
         candidate
       });
     });
 
     // ── In-call chat ───────────────────────────────────────────
-    socket.on('call:chat-message', ({ channelId, text }) => {
-      if (!channelId || !text) return;
-      const session = activeCalls.get(channelId);
+    socket.on('call:chat-message', ({ meetingId, text }) => {
+      if (!meetingId || !text) return;
+      const session = activeMeetings.get(meetingId);
       if (!session) return;
 
-      // Verify sender is in the call
+      // Verify sender is in the meeting
       if (!session.participants.has(socket.id)) return;
 
       const chatMsg = {
@@ -177,14 +124,14 @@ function initVideoCallSocket(io) {
         session.chatMessages = session.chatMessages.slice(-100);
       }
 
-      io.to(`call:${channelId}`).emit('call:chat-message', chatMsg);
+      io.to(`meeting:${meetingId}`).emit('call:chat-message', chatMsg);
     });
 
     // ── Media state broadcast ──────────────────────────────────
-    socket.on('call:media-state', ({ channelId, isCameraOn, isMicOn, isScreenSharing }) => {
-      if (!channelId) return;
-      // Relay to all call participants (including sender for confirmation)
-      io.to(`call:${channelId}`).emit('call:media-state', {
+    socket.on('call:media-state', ({ meetingId, isCameraOn, isMicOn, isScreenSharing }) => {
+      if (!meetingId) return;
+      // Relay to all participants
+      io.to(`meeting:${meetingId}`).emit('call:media-state', {
         userId,
         isCameraOn,
         isMicOn,
@@ -192,49 +139,40 @@ function initVideoCallSocket(io) {
       });
     });
 
-    // ── Handle disconnect (clean up all calls) ─────────────────
+    // ── Handle disconnect (clean up all meetings) ─────────────────
     socket.on('disconnect', () => {
-      // Find all calls this socket is part of and leave them
-      for (const [channelId, session] of activeCalls.entries()) {
+      for (const [meetingId, session] of activeMeetings.entries()) {
         if (session.participants.has(socket.id)) {
-          handleLeaveCall(io, socket, channelId);
+          handleLeaveMeeting(socket, meetingId);
         }
       }
     });
   });
 }
 
-function handleLeaveCall(io, socket, channelId) {
-  if (!channelId) return;
+function handleLeaveMeeting(socket, meetingId) {
+  if (!meetingId) return;
 
-  const session = activeCalls.get(channelId);
+  const session = activeMeetings.get(meetingId);
   if (!session) return;
 
   const participant = session.participants.get(socket.id);
   if (!participant) return;
 
   session.participants.delete(socket.id);
-  socket.leave(`call:${channelId}`);
+  socket.leave(`meeting:${meetingId}`);
 
   // Notify remaining participants
-  socket.to(`call:${channelId}`).emit('call:user-left', {
-    channelId,
+  socket.to(`meeting:${meetingId}`).emit('call:user-left', {
+    meetingId,
     socketId: socket.id,
     userId: participant.userId,
     userName: participant.userName
   });
 
-  // If no participants left, end the call
+  // If no participants left, end the meeting
   if (session.participants.size === 0) {
-    activeCalls.delete(channelId);
-    io.to(`channel:${channelId}`).emit('call:ended', { channelId });
-  } else {
-    // Update channel about active call state
-    io.to(`channel:${channelId}`).emit('call:active', {
-      channelId,
-      participants: Array.from(session.participants.values()),
-      startedBy: session.startedBy
-    });
+    activeMeetings.delete(meetingId);
   }
 }
 

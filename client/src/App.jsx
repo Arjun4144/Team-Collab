@@ -4,6 +4,7 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import AuthPage from './pages/AuthPage';
 import WorkspacePage from './pages/WorkspacePage';
 import JoinInvitePage from './pages/JoinInvitePage';
+import MeetingPage from './pages/MeetingPage';
 import './index.css';
 
 export default function App() {
@@ -25,6 +26,9 @@ export default function App() {
         } />
         <Route path="/workspace/:workspaceId" element={
           <ProtectedRoute><WorkspacePage /></ProtectedRoute>
+        } />
+        <Route path="/meet/:meetingId" element={
+          <ProtectedRoute><MeetingPage /></ProtectedRoute>
         } />
         <Route path="/" element={
           <ProtectedRoute><WorkspacePage /></ProtectedRoute>

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStore from '../../store/useStore';
-import CallButton from '../../video-call/components/CallButton';
 
 // Hook for window width to determine overflow
 function useWindowWidth() {
@@ -118,8 +117,6 @@ export default function ChannelHeader() {
             👥 {totalMembers} · <span style={{ color: '#10b981' }}>●</span> {onlineMembers}
           </span>
         )}
-        
-        <CallButton channelId={activeChannel._id} />
 
         {visibleActions.map(({ id, label }) => (
           <button 

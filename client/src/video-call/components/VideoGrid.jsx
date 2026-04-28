@@ -51,29 +51,64 @@ export default function VideoGrid({
   isCameraOn, isMicOn, isScreenSharing, 
   peerMediaStates, viewMode 
 }) {
-  const participants = [
-    {
-      id: 'local',
-      stream: localStream,
-      label: userName,
-      isLocal: true,
-      isCameraOn,
-      isMicOn,
-      isScreenSharing
-    },
-    ...Object.entries(remoteStreams).map(([socketId, { stream, userName: name, userId }]) => {
+  const buildParticipants = () => {
+    const list = [];
+    
+    // Helper to process a user and split their stream if they have multiple video tracks
+    const processUser = (id, stream, label, isLocal, isCameraOn, isMicOn, isScreenSharing) => {
+      const videoTracks = stream ? stream.getVideoTracks() : [];
+      
+      if (videoTracks.length > 1) {
+        // Create a dedicated stream for the screen share (assume track 1 is screen share if both exist)
+        const cameraStream = new MediaStream([ ...stream.getAudioTracks(), videoTracks[0] ]);
+        const screenStream = new MediaStream([ videoTracks[1] ]);
+        
+        list.push({
+          id,
+          stream: cameraStream,
+          label,
+          isLocal,
+          isCameraOn,
+          isMicOn,
+          isScreenSharing: false // The primary tile doesn't get the screen share styling
+        });
+        
+        list.push({
+          id: `${id}_screen`,
+          stream: screenStream,
+          label: `${label}'s Screen`,
+          isLocal,
+          isCameraOn: false,
+          isMicOn: false, // Audio is on the primary tile
+          isScreenSharing: true
+        });
+      } else {
+        // Standard single tile
+        list.push({
+          id,
+          stream,
+          label,
+          isLocal,
+          isCameraOn,
+          isMicOn,
+          isScreenSharing
+        });
+      }
+    };
+
+    // Add local
+    processUser('local', localStream, userName, true, isCameraOn, isMicOn, isScreenSharing);
+
+    // Add remotes
+    Object.entries(remoteStreams).forEach(([socketId, { stream, userName: name, userId }]) => {
       const peerState = peerMediaStates?.[userId] || {};
-      return {
-        id: socketId,
-        stream,
-        label: name,
-        isLocal: false,
-        isCameraOn: !!peerState.isCameraOn,
-        isMicOn: !!peerState.isMicOn,
-        isScreenSharing: !!peerState.isScreenSharing
-      };
-    })
-  ];
+      processUser(socketId, stream, name, false, !!peerState.isCameraOn, !!peerState.isMicOn, !!peerState.isScreenSharing);
+    });
+
+    return list;
+  };
+
+  const participants = buildParticipants();
 
   // Auto-switch to speaker if ANYONE is screen sharing
   const hasScreenShare = participants.some(p => p.isScreenSharing);

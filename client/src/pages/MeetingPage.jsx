@@ -1,29 +1,30 @@
-/**
- * VideoCallContainer — Main video call UI, mounted conditionally when a user is in a call.
- * Orchestrates WebRTC, controls, video grid, and in-call chat.
- * Default state: camera OFF, mic OFF — no media acquired until user toggles.
- */
 import React, { useEffect, useState, useCallback } from 'react';
-import VideoGrid from './VideoGrid';
-import Controls from './Controls';
-import ChatBox from './ChatBox';
-import useWebRTC from '../hooks/useWebRTC';
-import useStore from '../../store/useStore';
+import { useParams, useNavigate } from 'react-router-dom';
+import VideoGrid from '../video-call/components/VideoGrid';
+import Controls from '../video-call/components/Controls';
+import ChatBox from '../video-call/components/ChatBox';
+import useWebRTC from '../video-call/hooks/useWebRTC';
+import useCallSocket from '../video-call/hooks/useCallSocket';
+import useStore from '../store/useStore';
 
-export default function VideoCallContainer({ channelId, onClose, mode, callSocketData }) {
+export default function MeetingPage() {
+  const { meetingId } = useParams();
+  const navigate = useNavigate();
   const user = useStore(s => s.user);
+  
   const [chatOpen, setChatOpen] = useState(true);
   const [viewMode, setViewMode] = useState('gallery');
 
+  // Hook into the signaling socket for this meeting
   const {
     chatMessages,
+    joinCall,
     leaveCall,
     sendChatMessage,
-    peerMediaStates,
-    startCall,
-    joinCall
-  } = callSocketData;
+    peerMediaStates
+  } = useCallSocket(meetingId);
 
+  // Hook into WebRTC mesh
   const {
     localStream,
     remoteStreams,
@@ -35,28 +36,24 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
     toggleMic,
     toggleScreenShare,
     cleanup,
-  } = useWebRTC(channelId, true);
+  } = useWebRTC(meetingId, true);
 
-  // Cleanup on unmount only
+  // Join the meeting on mount
   useEffect(() => {
-    return () => { cleanup(); };
-  }, [cleanup]);
-
-  // Initiate the call AFTER useWebRTC has attached its socket listeners.
-  // This guarantees we don't miss the immediate server response (e.g. call:participants).
-  useEffect(() => {
-    if (mode === 'start') {
-      startCall();
-    } else if (mode === 'join') {
+    if (meetingId) {
       joinCall();
     }
-  }, [mode, startCall, joinCall]);
+    return () => {
+      leaveCall();
+      cleanup();
+    };
+  }, [meetingId, joinCall, leaveCall, cleanup]);
 
   const handleLeave = useCallback(() => {
     leaveCall();
     cleanup();
-    if (onClose) onClose();
-  }, [leaveCall, cleanup, onClose]);
+    navigate('/'); // Redirect to home or dashboard after leaving
+  }, [leaveCall, cleanup, navigate]);
 
   const toggleViewMode = useCallback(() => {
     setViewMode(prev => prev === 'gallery' ? 'speaker' : 'gallery');
@@ -65,14 +62,14 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
   const participantCount = 1 + Object.keys(remoteStreams).length;
 
   return (
-    <div style={styles.overlay}>
+    <div style={styles.page}>
       <div style={styles.container}>
         {/* Header bar */}
         <div style={styles.header}>
           <div style={styles.headerLeft}>
             <span style={styles.liveIndicator} />
-            <span style={styles.headerTitle}>Video Call</span>
-            <span style={styles.channelBadge}>#{useStore.getState().activeChannel?.name}</span>
+            <span style={styles.headerTitle}>Nexus Meet</span>
+            <span style={styles.meetingBadge}>{meetingId}</span>
           </div>
           <div style={styles.headerRight}>
             <span style={styles.participantCount}>👥 {participantCount}</span>
@@ -127,20 +124,19 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
 }
 
 const styles = {
-  overlay: {
-    position: 'fixed',
-    top: 0, left: 0, right: 0, bottom: 0,
-    zIndex: 10000,
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    background: 'rgba(0,0,0,0.85)',
-    animation: 'fadeIn 0.3s ease',
+  page: {
+    width: '100vw',
+    height: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#0a0a0f',
   },
   container: {
-    width: '95vw', height: '92vh', maxWidth: 1400,
+    width: '100%',
+    height: '100%',
     display: 'flex', flexDirection: 'column',
-    background: '#0a0a0f', borderRadius: 20, overflow: 'hidden',
-    border: '1px solid rgba(14, 165, 233, 0.15)',
-    boxShadow: '0 30px 100px rgba(0,0,0,0.8), 0 0 60px rgba(14,165,233,0.1)',
+    background: '#0a0a0f',
     position: 'relative',
   },
   header: {
@@ -154,11 +150,12 @@ const styles = {
     background: '#ef4444', boxShadow: '0 0 8px #ef4444',
     animation: 'pulse 1.5s ease-in-out infinite',
   },
-  headerTitle: { color: '#e8edf5', fontSize: 15, fontWeight: 700, fontFamily: "'Syne', sans-serif" },
-  channelBadge: {
-    fontSize: 11, padding: '2px 8px', borderRadius: 4,
+  headerTitle: { color: '#e8edf5', fontSize: 16, fontWeight: 700, fontFamily: "'Syne', sans-serif" },
+  meetingBadge: {
+    fontSize: 12, padding: '4px 10px', borderRadius: 6,
     background: 'rgba(14,165,233,0.15)', color: '#0ea5e9',
     fontWeight: 600, border: '1px solid rgba(14,165,233,0.25)',
+    userSelect: 'all', cursor: 'copy'
   },
   headerRight: { display: 'flex', alignItems: 'center', gap: 12 },
   participantCount: { color: '#7d99b8', fontSize: 13, fontWeight: 500 },
