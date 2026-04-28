@@ -6,25 +6,11 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { getSocket } from '../../utils/socket';
 
 const ICE_SERVERS = [
-  // ── STUN (public IP discovery) ──
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  // ── TURN (relay for NAT traversal — REQUIRED for cross-machine calls) ──
-  {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
-  {
-    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject',
-  },
+  // TODO: Add working TURN server credentials for cross-network/NAT relay.
+  // The old openrelay.metered.ca TURN server is defunct.
+  // Get free TURN credentials at https://www.metered.ca/stun-turn
 ];
 
 // ── Debug logger ──────────────────────────────────────────────
@@ -52,6 +38,7 @@ export default function useWebRTC(channelId, inCall) {
   const peerConnections = useRef({});
   const pendingCandidates = useRef({});
   const makingOffer = useRef({});
+  const peerMetadata = useRef({}); // { [socketId]: { userId, userName } }
   const videoTrackRef = useRef(null);
   const audioTrackRef = useRef(null);
   const screenTrackRef = useRef(null);
@@ -102,15 +89,8 @@ export default function useWebRTC(channelId, inCall) {
     peerConnections.current[remoteSocketId] = pc;
     makingOffer.current[remoteSocketId] = false;
 
-    // We rely entirely on native event.streams binding rather than manual stream mutation.
-    setRemoteStreams((prev) => ({
-      ...prev,
-      [remoteSocketId]: {
-        stream: null, // will be bound from event.streams[0]
-        userId: remoteUserId,
-        userName: remoteUserName,
-      },
-    }));
+    // Store peer metadata in a ref (not in remoteStreams — keep streams flat).
+    peerMetadata.current[remoteSocketId] = { userId: remoteUserId, userName: remoteUserName };
 
     D(`  [DEBUG] Initializing transceivers (1 audio, 1 video) for new PC`);
     const audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
@@ -133,9 +113,15 @@ export default function useWebRTC(channelId, inCall) {
     pc.onnegotiationneeded = async () => {
       D(`onnegotiationneeded FIRED for ${remoteSocketId.slice(-6)} | signalingState=${pc.signalingState} | senders=${pc.getSenders().length}`);
       dumpPeerState('onnegotiationneeded', peerConnections);
+      if (pc.signalingState !== 'stable') {
+        D(`  Skipping offer for ${remoteSocketId.slice(-6)} because signalingState=${pc.signalingState}`);
+        return;
+      }
+
       try {
         makingOffer.current[remoteSocketId] = true;
-        await pc.setLocalDescription();
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
         D(`  → Offer created & set. Sending to ${remoteSocketId.slice(-6)} | type=${pc.localDescription.type} | senders=${pc.getSenders().length}`);
         socket.emit('webrtc:offer', {
           channelId: channelIdRef.current,
@@ -143,13 +129,7 @@ export default function useWebRTC(channelId, inCall) {
           offer: pc.localDescription,
         });
       } catch (err) {
-        ERR('onnegotiationneeded error (will retry in 500ms):', err);
-        setTimeout(() => {
-          if (pc.signalingState !== 'closed') {
-            D(`Retrying onnegotiationneeded for ${remoteSocketId.slice(-6)}`);
-            pc.dispatchEvent(new Event('negotiationneeded'));
-          }
-        }, 500);
+        ERR('onnegotiationneeded error:', err);
       } finally {
         makingOffer.current[remoteSocketId] = false;
       }
@@ -171,17 +151,20 @@ export default function useWebRTC(channelId, inCall) {
 
     // ── Remote tracks ──
     pc.ontrack = (event) => {
-      D(`  → [DEBUG] ontrack FIRED from ${remoteSocketId.slice(-6)} | track=${event.track.kind} id=${event.track.id.slice(-6)} streams=${event.streams.length}`);
-      if (event.streams && event.streams[0]) {
-        D(`  Binding stream ID: ${event.streams[0].id}`);
-        setRemoteStreams((prev) => ({
-          ...prev,
-          [remoteSocketId]: {
-            ...prev[remoteSocketId],
-            stream: event.streams[0],
-          },
-        }));
-      }
+      const remoteStream = event.streams[0];
+      if (!remoteStream) return;
+      D(`  → [DEBUG] ontrack FIRED from ${remoteSocketId.slice(-6)} | track=${event.track.kind} id=${event.track.id.slice(-6)} stream=${remoteStream.id}`);
+
+      console.log("[DEBUG TRACK]", {
+        tracks: remoteStream.getTracks().map(t => t.kind),
+        videoTracks: remoteStream.getVideoTracks().length,
+        audioTracks: remoteStream.getAudioTracks().length
+      });
+
+      setRemoteStreams((prev) => ({
+        ...prev,
+        [remoteSocketId]: remoteStream,
+      }));
     };
 
     pc.oniceconnectionstatechange = () => {
@@ -403,26 +386,7 @@ export default function useWebRTC(channelId, inCall) {
     const onUserJoined = async ({ socketId, userId, userName }) => {
       D(`EVENT call:user-joined | who=${userName}(${socketId.slice(-6)})`);
       if (!inCallRef.current) { WARN('  Not in call, ignoring'); return; }
-      const pc = createPeerConnection(socketId, userId, userName);
-      if (pc.getSenders().length === 0) {
-        D('  No senders → sending explicit initial offer');
-        try {
-          makingOffer.current[socketId] = true;
-          await pc.setLocalDescription();
-          D(`  → Initial offer sent to ${socketId.slice(-6)}`);
-          socket.emit('webrtc:offer', {
-            channelId: channelIdRef.current,
-            targetSocketId: socketId,
-            offer: pc.localDescription,
-          });
-        } catch (err) {
-          ERR('Initial offer error:', err);
-        } finally {
-          makingOffer.current[socketId] = false;
-        }
-      } else {
-        D(`  ${pc.getSenders().length} senders exist → onnegotiationneeded will fire from addTrack`);
-      }
+      createPeerConnection(socketId, userId, userName);
       broadcastMediaState();
     };
 
@@ -453,7 +417,8 @@ export default function useWebRTC(channelId, inCall) {
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         D(`  Remote description set. Creating answer...`);
-        await pc.setLocalDescription();
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
         D(`  → Answer sent to ${fromSocketId.slice(-6)} | type=${pc.localDescription.type}`);
         socket.emit('webrtc:answer', {
           channelId: channelIdRef.current,
@@ -473,6 +438,14 @@ export default function useWebRTC(channelId, inCall) {
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
         D(`  Remote description set successfully. signalingState=${pc.signalingState}`);
+        // Flush any ICE candidates that arrived before the answer
+        if (pendingCandidates.current[fromSocketId]) {
+          D(`  Flushing ${pendingCandidates.current[fromSocketId].length} queued ICE candidates after answer`);
+          for (const c of pendingCandidates.current[fromSocketId]) {
+            try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch {}
+          }
+          delete pendingCandidates.current[fromSocketId];
+        }
       } catch (err) {
         WARN('  setRemoteDescription(answer) failed:', err.message);
       }
@@ -498,6 +471,7 @@ export default function useWebRTC(channelId, inCall) {
       }
       delete pendingCandidates.current[socketId];
       delete makingOffer.current[socketId];
+      delete peerMetadata.current[socketId];
       setRemoteStreams((prev) => {
         const next = { ...prev };
         delete next[socketId];
@@ -513,34 +487,8 @@ export default function useWebRTC(channelId, inCall) {
       participants.forEach((p) => {
         D(`  participant: ${p.userName}(${p.socketId.slice(-6)}) | isMe=${p.socketId === mySocketId} | pcExists=${!!peerConnections.current[p.socketId]}`);
         if (p.socketId !== mySocketId && !peerConnections.current[p.socketId]) {
-          const shouldOffer = mySocketId > p.socketId;
-          D(`  → shouldOffer=${shouldOffer} (myId=${mySocketId.slice(-6)} vs ${p.socketId.slice(-6)})`);
-          if (shouldOffer) {
-            const pc = createPeerConnection(p.socketId, p.userId, p.userName);
-            if (pc.getSenders().length === 0) {
-              D(`  → Sending explicit initial offer (no senders)`);
-              (async () => {
-                try {
-                  makingOffer.current[p.socketId] = true;
-                  await pc.setLocalDescription();
-                  socket.emit('webrtc:offer', {
-                    channelId: channelIdRef.current,
-                    targetSocketId: p.socketId,
-                    offer: pc.localDescription,
-                  });
-                  D(`  → Initial offer sent to ${p.socketId.slice(-6)}`);
-                } catch (err) {
-                  ERR('Initial offer error:', err);
-                } finally {
-                  makingOffer.current[p.socketId] = false;
-                }
-              })();
-            } else {
-              D(`  → ${pc.getSenders().length} senders → onnegotiationneeded will fire`);
-            }
-          } else {
-            D(`  → Waiting for THEM to send us an offer`);
-          }
+          D(`  → Creating PC for ${p.socketId.slice(-6)} (both sides create; perfect negotiation handles collisions)`);
+          createPeerConnection(p.socketId, p.userId, p.userName);
         }
       });
       broadcastMediaState();
@@ -574,6 +522,7 @@ export default function useWebRTC(channelId, inCall) {
     peerConnections.current = {};
     pendingCandidates.current = {};
     makingOffer.current = {};
+    peerMetadata.current = {};
     if (videoTrackRef.current) { videoTrackRef.current.stop(); videoTrackRef.current = null; }
     if (audioTrackRef.current) { audioTrackRef.current.stop(); audioTrackRef.current = null; }
     if (screenTrackRef.current) { screenTrackRef.current.stop(); screenTrackRef.current = null; }
@@ -591,6 +540,7 @@ export default function useWebRTC(channelId, inCall) {
   return {
     localStream,
     remoteStreams,
+    peerMetadata,
     isCameraOn,
     isMicOn,
     isScreenSharing,

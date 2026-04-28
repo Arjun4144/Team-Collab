@@ -49,7 +49,7 @@ function VideoTile({ stream, label, isLocal, isCameraOn, isMicOn, isScreenSharin
 }
 
 export default function VideoGrid({ 
-  localStream, remoteStreams, userName, 
+  localStream, remoteStreams, peerMetadata, userName, 
   isCameraOn, isMicOn, isScreenSharing, 
   peerMediaStates, viewMode 
 }) {
@@ -63,12 +63,13 @@ export default function VideoGrid({
       isMicOn,
       isScreenSharing
     },
-    ...Object.entries(remoteStreams).map(([socketId, { stream, userName: name, userId }]) => {
-      const peerState = peerMediaStates?.[userId] || {};
+    ...Object.entries(remoteStreams).map(([socketId, stream]) => {
+      const meta = peerMetadata?.current?.[socketId] || {};
+      const peerState = peerMediaStates?.[meta.userId] || {};
       return {
         id: socketId,
         stream,
-        label: name,
+        label: meta.userName,
         isLocal: false,
         isCameraOn: !!peerState.isCameraOn,
         isMicOn: !!peerState.isMicOn,

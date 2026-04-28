@@ -27,7 +27,7 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
   const {
     localStream,
     remoteStreams,
-    remoteStreamVersion,
+    peerMetadata,
     isCameraOn,
     isMicOn,
     isScreenSharing,
@@ -38,16 +38,24 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
   } = useWebRTC(channelId, true);
 
   // ── Strict Mode & Mount Guard ──
-  // We intentionally do NOT call `cleanup()` on standard unmount.
-  // React 18 Strict Mode unmounts and remounts immediately; calling cleanup here
-  // would destroy the PeerConnections. Instead, cleanup is handled explicitly via 
-  // handleLeave, or when the window unloads.
+  // Delay cleanup by 200ms so React 18 Strict Mode's synchronous
+  // unmount-remount cycle can cancel it. Real unmounts (leaving call,
+  // navigating away) wait the 200ms then clean up normally.
+  const cleanupTimerRef = useRef(null);
   useEffect(() => {
+    // Cancel any pending cleanup from a previous Strict Mode unmount
+    if (cleanupTimerRef.current) {
+      clearTimeout(cleanupTimerRef.current);
+      cleanupTimerRef.current = null;
+    }
     const handleUnload = () => cleanup();
     window.addEventListener('beforeunload', handleUnload);
     return () => {
       window.removeEventListener('beforeunload', handleUnload);
-      cleanup(); // CRITICAL: Ensure all peerConnections are closed on unmount (including Strict Mode)
+      // Delay cleanup to survive Strict Mode remount
+      cleanupTimerRef.current = setTimeout(() => {
+        cleanup();
+      }, 200);
     };
   }, [cleanup]);
 
@@ -66,6 +74,11 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
   }, [mode, startCall, joinCall]);
 
   const handleLeave = useCallback(() => {
+    // Cancel any delayed cleanup timer — we're cleaning up immediately
+    if (cleanupTimerRef.current) {
+      clearTimeout(cleanupTimerRef.current);
+      cleanupTimerRef.current = null;
+    }
     leaveCall();
     cleanup();
     if (onClose) onClose();
@@ -104,7 +117,7 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
           <VideoGrid
             localStream={localStream}
             remoteStreams={remoteStreams}
-            remoteStreamVersion={remoteStreamVersion}
+            peerMetadata={peerMetadata}
             userName={user?.name || 'You'}
             isCameraOn={isCameraOn}
             isMicOn={isMicOn}
