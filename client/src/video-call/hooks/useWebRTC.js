@@ -8,6 +8,27 @@ import { getSocket } from '../../utils/socket';
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  {
+    urls: 'turn:global.relay.metered.ca:80',
+    username: '83eebcfa0be4233cc09b60c1',
+    credential: 'VjYsIyouisYpvJwR',
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:80?transport=tcp',
+    username: '83eebcfa0be4233cc09b60c1',
+    credential: 'VjYsIyouisYpvJwR',
+  },
+  {
+    urls: 'turn:global.relay.metered.ca:443',
+    username: '83eebcfa0be4233cc09b60c1',
+    credential: 'VjYsIyouisYpvJwR',
+  },
+  {
+    urls: 'turns:global.relay.metered.ca:443?transport=tcp',
+    username: '83eebcfa0be4233cc09b60c1',
+    credential: 'VjYsIyouisYpvJwR',
+  },
 ];
 
 // ── Debug logger ──────────────────────────────────────────────
@@ -168,6 +189,19 @@ export default function useWebRTC(channelId, inCall) {
 
     pc.oniceconnectionstatechange = () => {
       D(`ICE state change for ${remoteSocketId.slice(-6)}: ${pc.iceConnectionState}`);
+      if (pc.iceConnectionState === 'failed') {
+        WARN(`ICE FAILED for ${remoteSocketId.slice(-6)} — restarting ICE`);
+        pc.restartIce();
+      }
+      if (pc.iceConnectionState === 'disconnected') {
+        // Give it a few seconds, then restart if still disconnected
+        setTimeout(() => {
+          if (pc.iceConnectionState === 'disconnected') {
+            WARN(`ICE still disconnected for ${remoteSocketId.slice(-6)} — restarting ICE`);
+            pc.restartIce();
+          }
+        }, 3000);
+      }
     };
 
     pc.onsignalingstatechange = () => {

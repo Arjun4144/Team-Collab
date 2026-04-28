@@ -17,7 +17,7 @@ function VideoTile({ stream, label, isLocal, isCameraOn, isMicOn, isScreenSharin
         ref={videoRef}
         autoPlay
         playsInline
-        muted={!isMicOn || isLocal}
+        muted={isLocal}
         style={{
           ...styles.video,
           ...(isLocal && !isScreenSharing ? styles.videoMirrored : {}),
