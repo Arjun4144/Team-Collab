@@ -20,7 +20,10 @@ export default function useCallSocket(channelId) {
   useEffect(() => {
     if (!socket) return;
 
+    console.log(`[CallSocket] Attaching listeners | socketId=${socket.id} | channelId=${currentChannelRef.current}`);
+
     const onCallActive = (data) => {
+      console.log(`[CallSocket] call:active received | channelId=${data.channelId} | participants=${data.participants?.length}`);
       if (data.channelId === currentChannelRef.current) {
         setActiveCall(data);
         callService.setState({ activeCallInfo: data });
@@ -36,6 +39,7 @@ export default function useCallSocket(channelId) {
     };
 
     const onCallParticipants = (data) => {
+      console.log(`[CallSocket] call:participants received | channelId=${data.channelId} | count=${data.participants?.length} | ids=${data.participants?.map(p => p.socketId?.slice(-6)).join(',')}`);
       if (data.channelId === currentChannelRef.current) {
         callService.setState({ participants: data.participants });
         if (data.chatHistory) {
@@ -85,12 +89,14 @@ export default function useCallSocket(channelId) {
 
   const startCall = useCallback(() => {
     if (!socket || !channelId) return;
+    console.log(`[CallSocket] Emitting call:start | socketId=${socket.id} | channelId=${channelId}`);
     callService.setState({ inCall: true, channelId });
     socket.emit('call:start', { channelId });
   }, [socket, channelId]);
 
   const joinCall = useCallback(() => {
     if (!socket || !channelId) return;
+    console.log(`[CallSocket] Emitting call:join | socketId=${socket.id} | channelId=${channelId}`);
     callService.setState({ inCall: true, channelId });
     socket.emit('call:join', { channelId });
   }, [socket, channelId]);

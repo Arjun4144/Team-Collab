@@ -1,10 +1,11 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://team-collab-ntlm.onrender.com/api',
+  baseURL: 'https://team-collab-anuj-debug.onrender.com/api',
   headers: { 'Content-Type': 'application/json' }
 });
 
+console.log("API BASE:", api.defaults.baseURL);
 console.log('[DEBUG] axios baseURL is set to:', api.defaults.baseURL);
 
 api.interceptors.request.use((config) => {

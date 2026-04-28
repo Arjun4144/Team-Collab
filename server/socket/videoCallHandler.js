@@ -15,6 +15,12 @@ function initVideoCallSocket(io) {
     const userId = socket.user._id.toString();
     const userName = socket.user.name || 'Unknown';
 
+    console.log(`[WS-CONNECT] socketId=${socket.id} userId=${userId} userName=${userName}`);
+    console.log(`[WS-CONNECT] Current rooms:`, Array.from(socket.rooms));
+
+    console.log(`[WS-CONNECT] socketId=${socket.id} userId=${userId} userName=${userName}`);
+    console.log(`[WS-CONNECT] Current rooms at connect:`, Array.from(socket.rooms));
+
     // ── call:start ─────────────────────────────────────────────
     socket.on('call:start', ({ channelId }) => {
       if (!channelId) return;
@@ -138,6 +144,8 @@ function initVideoCallSocket(io) {
 
     // ── WebRTC Signaling ───────────────────────────────────────
     socket.on('webrtc:offer', ({ channelId, targetSocketId, offer }) => {
+      const targetExists = io.sockets.sockets.has(targetSocketId);
+      console.log(`[WebRTC] OFFER  | from=${userName}(${socket.id.slice(-6)}) → to=${targetSocketId.slice(-6)} | ch=${channelId} | type=${offer?.type} | targetOnline=${targetExists}`);
       io.to(targetSocketId).emit('webrtc:offer', {
         channelId,
         fromSocketId: socket.id,
@@ -148,6 +156,8 @@ function initVideoCallSocket(io) {
     });
 
     socket.on('webrtc:answer', ({ channelId, targetSocketId, answer }) => {
+      const targetExists = io.sockets.sockets.has(targetSocketId);
+      console.log(`[WebRTC] ANSWER | from=${userName}(${socket.id.slice(-6)}) → to=${targetSocketId.slice(-6)} | ch=${channelId} | type=${answer?.type} | targetOnline=${targetExists}`);
       io.to(targetSocketId).emit('webrtc:answer', {
         channelId,
         fromSocketId: socket.id,
@@ -156,6 +166,7 @@ function initVideoCallSocket(io) {
     });
 
     socket.on('webrtc:ice-candidate', ({ channelId, targetSocketId, candidate }) => {
+      console.log(`[WebRTC] ICE    | from=${userName}(${socket.id.slice(-6)}) → to=${targetSocketId.slice(-6)} | protocol=${candidate?.protocol} type=${candidate?.type}`);
       io.to(targetSocketId).emit('webrtc:ice-candidate', {
         channelId,
         fromSocketId: socket.id,
@@ -202,10 +213,12 @@ function initVideoCallSocket(io) {
     });
 
     // ── Handle disconnect (clean up all calls) ─────────────────
-    socket.on('disconnect', () => {
+    socket.on('disconnect', (reason) => {
+      console.log(`[WS-DISCONNECT] socketId=${socket.id} userId=${userId} userName=${userName} reason=${reason}`);
       // Find all calls this socket is part of and leave them
       for (const [channelId, session] of activeCalls.entries()) {
         if (session.participants.has(socket.id)) {
+          console.log(`[WS-DISCONNECT] Cleaning up call in channel=${channelId} for ${userName}`);
           handleLeaveCall(io, socket, channelId);
         }
       }

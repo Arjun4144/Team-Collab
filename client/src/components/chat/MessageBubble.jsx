@@ -349,7 +349,7 @@ export default function MessageBubble({ message, onReply }) {
           const att = message.attachments[0];
           // Support full URLs (Cloudinary) and legacy /uploads/ paths
           const isFullUrl = att.url?.startsWith('http://') || att.url?.startsWith('https://') || att.url?.startsWith('blob:');
-          const actualUrl = isFullUrl ? att.url : (att.url?.startsWith('/uploads/') ? `https://team-collab-ntlm.onrender.com${att.url}` : `https://team-collab-ntlm.onrender.com/uploads/${att.url}`);
+          const actualUrl = isFullUrl ? att.url : (att.url?.startsWith('/uploads/') ? `https://team-collab-anuj-debug.onrender.com${att.url}` : `https://team-collab-anuj-debug.onrender.com/uploads/${att.url}`);
           const audioUrl = actualUrl;
           return <AudioPlayer audioUrl={audioUrl} duration={message.audioDuration || 0} isOwn={isOwn} />;
         })()}
@@ -369,7 +369,7 @@ export default function MessageBubble({ message, onReply }) {
               if (isAudio) return null; // handled by AudioPlayer
               // Support full URLs (Cloudinary) and legacy /uploads/ paths
               const isFullUrl = att.url?.startsWith('http://') || att.url?.startsWith('https://');
-              const fileUrl = isFullUrl ? att.url : (att.url?.startsWith('/uploads/') ? `https://team-collab-ntlm.onrender.com${att.url}` : `https://team-collab-ntlm.onrender.com/uploads/${att.url}`);
+              const fileUrl = isFullUrl ? att.url : (att.url?.startsWith('/uploads/') ? `https://team-collab-anuj-debug.onrender.com${att.url}` : `https://team-collab-anuj-debug.onrender.com/uploads/${att.url}`);
               return (
                 <div key={i} style={styles.attachment}>
                   {isImage ? (

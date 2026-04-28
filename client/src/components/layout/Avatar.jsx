@@ -12,7 +12,7 @@ export default function Avatar({ user, size = 32, fontSize = 11, style = {} }) {
   if (typeof avatarUrl !== 'string' || !avatarUrl.trim()) {
     avatarUrl = null;
   } else if (avatarUrl.startsWith('/uploads/')) {
-    avatarUrl = `https://team-collab-ntlm.onrender.com${avatarUrl}`;
+    avatarUrl = `https://team-collab-anuj-debug.onrender.com${avatarUrl}`;
   }
 
   return (
