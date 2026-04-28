@@ -108,7 +108,7 @@ export default function ProfileModal({ isOpen, onClose, user: targetUser }) {
               title={isSelf ? "Change photo" : ""}
             >
               {avatarPreview ? (
-                <img src={avatarPreview} alt="Avatar" style={styles.avatarImg} />
+                <img src={avatarPreview.startsWith('/uploads/') ? `https://team-collab-ntlm.onrender.com${avatarPreview}` : avatarPreview} alt="Avatar" style={styles.avatarImg} />
               ) : (
                 <div style={styles.avatarPlaceholder}>{getInitials(name || targetUser.name)}</div>
               )}

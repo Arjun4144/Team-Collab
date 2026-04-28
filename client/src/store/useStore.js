@@ -45,6 +45,7 @@ const useStore = create((set, get) => ({
     localStorage.removeItem('nexus_token');
     localStorage.removeItem('nexus_last_workspace');
     localStorage.removeItem('nexus_last_channel');
+    import('../utils/socket').then(({ disconnectSocket }) => disconnectSocket());
     set({ user: null, token: null, workspaces: [], channels: {}, messages: {}, summaries: {}, notifications: [], activeWorkspace: null, activeChannel: null });
   },
 

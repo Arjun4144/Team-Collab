@@ -69,7 +69,7 @@ export default function useWebRTC(channelId, inCall) {
   // ── Helpers ──────────────────────────────────────────────────
 
   const refreshLocalStream = useCallback(() => {
-    const tracks = localMediaStream.current.getTracks();
+    const tracks = [videoTrackRef.current, audioTrackRef.current, screenTrackRef.current].filter(t => t && t.readyState !== 'ended');
     D('refreshLocalStream:', tracks.map(t => `${t.kind}(enabled=${t.enabled})`));
     setLocalStream(tracks.length > 0 ? new MediaStream(tracks) : null);
   }, []);
@@ -113,19 +113,20 @@ export default function useWebRTC(channelId, inCall) {
     }));
 
     D(`  [DEBUG] Initializing transceivers (1 audio, 1 video) for new PC`);
-    pc.addTransceiver('audio', { direction: 'recvonly', streams: [localMediaStream.current] });
-    pc.addTransceiver('video', { direction: 'recvonly', streams: [localMediaStream.current] });
+    const audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
+    const videoTransceiver = pc.addTransceiver('video', { direction: 'sendrecv' });
 
-    if (localMediaStream.current) {
-      const activeTracks = localMediaStream.current.getTracks();
-      D(`  [DEBUG] Attaching ${activeTracks.length} existing tracks to transceivers via replaceTrack [${activeTracks.map(t => t.kind).join(',')}]`);
-      activeTracks.forEach(track => {
-        const transceiver = pc.getTransceivers().find(t => t.receiver && t.receiver.track && t.receiver.track.kind === track.kind);
-        if (transceiver && transceiver.sender) {
-          transceiver.sender.replaceTrack(track);
-          transceiver.direction = 'sendrecv';
-        }
-      });
+    // store senders directly on pc
+    pc._audioSender = audioTransceiver.sender;
+    pc._videoSender = videoTransceiver.sender;
+
+    // Sync existing tracks directly to the senders
+    if (audioTrackRef.current) {
+      pc._audioSender.replaceTrack(audioTrackRef.current);
+    }
+    const currentVideo = screenTrackRef.current || videoTrackRef.current;
+    if (currentVideo) {
+      pc._videoSender.replaceTrack(currentVideo);
     }
 
     // ── onnegotiationneeded (perfect negotiation pattern) ──
@@ -225,29 +226,23 @@ export default function useWebRTC(channelId, inCall) {
   //           and replace it. If null, find by kind OR add a new sender.
 
   const syncTrackToAllPeers = useCallback((track) => {
-    const pcEntries = Object.entries(peerConnections.current);
-    D(`syncTrackToAllPeers: track=${track.kind} id=${track.id.slice(-6)} enabled=${track.enabled} | peerCount=${pcEntries.length}`);
+    const pcs = Object.entries(peerConnections.current);
 
-    pcEntries.forEach(([socketId, pc]) => {
-      const transceivers = pc.getTransceivers();
-      // Find the specific transceiver for this media kind
-      const transceiver = transceivers.find(t => t.receiver && t.receiver.track && t.receiver.track.kind === track.kind);
+    pcs.forEach(([socketId, pc]) => {
+      let sender = null;
 
-      if (transceiver && transceiver.sender) {
-        D(`  → [DEBUG] replaceTrack on existing ${track.kind} transceiver for ${socketId.slice(-6)}`);
-        transceiver.sender.replaceTrack(track).catch(err => ERR('  replaceTrack error:', err));
+      if (track.kind === 'audio') sender = pc._audioSender;
+      if (track.kind === 'video') sender = pc._videoSender;
 
-        // Ensure transceiver allows sending
-        if (transceiver.direction === 'recvonly' || transceiver.direction === 'inactive') {
-          transceiver.direction = transceiver.direction === 'recvonly' ? 'sendrecv' : 'sendonly';
-          D(`  → [DEBUG] Changed transceiver direction to ${transceiver.direction}`);
-        }
-      } else {
-        WARN(`  No ${track.kind} transceiver found for ${socketId.slice(-6)}. Cannot sync track. Ensure transceivers are initialized on PC creation.`);
+      if (!sender) {
+        console.warn(`[WebRTC] Missing sender for ${track.kind} on ${socketId}`);
+        return;
       }
-    });
 
-    dumpPeerState('After syncTrackToAllPeers', peerConnections);
+      sender.replaceTrack(track).catch(err =>
+        console.error('[WebRTC] replaceTrack error:', err)
+      );
+    });
   }, []);
 
   // ── Toggle Camera ────────────────────────────────────────────
@@ -266,10 +261,6 @@ export default function useWebRTC(channelId, inCall) {
           const track = stream.getVideoTracks()[0];
           D(`  Got video track: id=${track.id} enabled=${track.enabled} readyState=${track.readyState}`);
           videoTrackRef.current = track;
-          // Replace all video tracks in local stream with the new camera track
-          localMediaStream.current.getVideoTracks().forEach(t => localMediaStream.current.removeTrack(t));
-          localMediaStream.current.addTrack(track);
-          D(`  localMediaStream now has ${localMediaStream.current.getTracks().length} tracks`);
           syncTrackToAllPeers(track);
         } catch (err) {
           ERR('Camera error:', err);
@@ -319,11 +310,6 @@ export default function useWebRTC(channelId, inCall) {
         // Save current camera track for restoration later
         previousVideoTrackRef.current = videoTrackRef.current;
 
-        // Replace video in local stream with screen track
-        localMediaStream.current.getVideoTracks().forEach(t => localMediaStream.current.removeTrack(t));
-        localMediaStream.current.addTrack(screenTrack);
-        D(`  Replaced video sender with screen track. localMediaStream tracks: ${localMediaStream.current.getTracks().length}`);
-
         // Replace the existing video sender on all peers (NOT addTrack)
         syncTrackToAllPeers(screenTrack);
         
@@ -348,7 +334,6 @@ export default function useWebRTC(channelId, inCall) {
     
     if (screenTrackRef.current) {
       screenTrackRef.current.stop();
-      localMediaStream.current.getVideoTracks().forEach(t => localMediaStream.current.removeTrack(t));
       screenTrackRef.current = null;
     }
 
@@ -356,7 +341,6 @@ export default function useWebRTC(channelId, inCall) {
     const cameraTrack = previousVideoTrackRef.current || videoTrackRef.current;
     if (cameraTrack && cameraTrack.readyState === 'live') {
       D(`  Restoring camera track id=${cameraTrack.id.slice(-6)}`);
-      localMediaStream.current.addTrack(cameraTrack);
       syncTrackToAllPeers(cameraTrack);
       isCameraOnRef.current = true;
       setIsCameraOn(true);
@@ -388,8 +372,6 @@ export default function useWebRTC(channelId, inCall) {
           const track = stream.getAudioTracks()[0];
           D(`  Got audio track: id=${track.id}`);
           audioTrackRef.current = track;
-          localMediaStream.current.getAudioTracks().forEach((t) => localMediaStream.current.removeTrack(t));
-          localMediaStream.current.addTrack(track);
           syncTrackToAllPeers(track);
         } catch (err) {
           ERR('Mic error:', err);

@@ -45,12 +45,19 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
   useEffect(() => {
     const handleUnload = () => cleanup();
     window.addEventListener('beforeunload', handleUnload);
-    return () => window.removeEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      cleanup(); // CRITICAL: Ensure all peerConnections are closed on unmount (including Strict Mode)
+    };
   }, [cleanup]);
 
   // Initiate the call AFTER useWebRTC has attached its socket listeners.
   // This guarantees we don't miss the immediate server response (e.g. call:participants).
+  const initialized = useRef(false);
   useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+    
     if (mode === 'start') {
       startCall();
     } else if (mode === 'join') {

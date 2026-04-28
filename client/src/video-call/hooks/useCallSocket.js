@@ -11,16 +11,14 @@ export default function useCallSocket(channelId) {
   const [activeCall, setActiveCall] = useState(null);
   const [chatMessages, setChatMessages] = useState([]);
   const [peerMediaStates, setPeerMediaStates] = useState({}); // { userId: { isCameraOn, isMicOn } }
-  const listenersAttached = useRef(false);
   const currentChannelRef = useRef(channelId);
-
   currentChannelRef.current = channelId;
 
-  // Attach listeners once
+  const socket = getSocket();
+
+  // Attach listeners when socket is available
   useEffect(() => {
-    const socket = getSocket();
-    if (!socket || listenersAttached.current) return;
-    listenersAttached.current = true;
+    if (!socket) return;
 
     const onCallActive = (data) => {
       if (data.channelId === currentChannelRef.current) {
@@ -72,13 +70,10 @@ export default function useCallSocket(channelId) {
       socket.off('call:chat-message', onChatMessage);
       socket.off('call:error', onCallError);
       socket.off('call:media-state', onMediaState);
-      listenersAttached.current = false;
     };
-  }, []);
+  }, [socket]);
 
-  // Check for active call when channel changes
   useEffect(() => {
-    const socket = getSocket();
     if (socket && channelId) {
       socket.emit('call:check', { channelId });
     }
@@ -86,34 +81,30 @@ export default function useCallSocket(channelId) {
     setActiveCall(null);
     setChatMessages([]);
     setPeerMediaStates({});
-  }, [channelId]);
+  }, [socket, channelId]);
 
   const startCall = useCallback(() => {
-    const socket = getSocket();
     if (!socket || !channelId) return;
     callService.setState({ inCall: true, channelId });
     socket.emit('call:start', { channelId });
-  }, [channelId]);
+  }, [socket, channelId]);
 
   const joinCall = useCallback(() => {
-    const socket = getSocket();
     if (!socket || !channelId) return;
     callService.setState({ inCall: true, channelId });
     socket.emit('call:join', { channelId });
-  }, [channelId]);
+  }, [socket, channelId]);
 
   const leaveCall = useCallback(() => {
-    const socket = getSocket();
     if (!socket || !channelId) return;
     socket.emit('call:leave', { channelId });
     callService.setState({ inCall: false, channelId: null, participants: [] });
-  }, [channelId]);
+  }, [socket, channelId]);
 
   const sendChatMessage = useCallback((text) => {
-    const socket = getSocket();
     if (!socket || !channelId || !text.trim()) return;
     socket.emit('call:chat-message', { channelId, text: text.trim() });
-  }, [channelId]);
+  }, [socket, channelId]);
 
   return {
     activeCall,

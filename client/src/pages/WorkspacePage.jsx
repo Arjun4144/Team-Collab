@@ -60,10 +60,13 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     if (!token) return;
-    // Boot socket
     const s = initSocket(token);
     setSocket(s);
+  }, [token]);
 
+  useEffect(() => {
+    if (!token) return;
+    
     // Load saved panel width
     const savedPanelW = localStorage.getItem('nexus_panel_width');
     if (savedPanelW) document.documentElement.style.setProperty('--panel-width', `${savedPanelW}px`);
@@ -115,7 +118,6 @@ export default function WorkspacePage() {
       }
     });
 
-    return () => { s.disconnect(); setSocket(null); };
   }, [token, urlWorkspaceId]);
 
   // Sync URL when workspace/channel changes

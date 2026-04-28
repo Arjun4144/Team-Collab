@@ -36,7 +36,10 @@ function initVideoCallSocket(io) {
       if (alreadyIn) return;
 
       session.participants.set(socket.id, { userId, userName });
-      socket.join(`call:${channelId}`);
+      const roomId = `call:${channelId}`;
+      socket.join(roomId);
+      console.log(`[Socket] User ${userName} joined room: ${roomId}`);
+      console.log(`[Socket] Broadcasting call:active to channel:${channelId}`);
 
       // Notify everyone in the channel that a call is active
       io.to(`channel:${channelId}`).emit('call:active', {
@@ -53,8 +56,9 @@ function initVideoCallSocket(io) {
         userName
       });
 
-      // Send existing participants list to the joiner
-      socket.emit('call:participants', {
+      console.log(`[Socket] Broadcasting call:participants to room: call:${channelId}`);
+      // Send existing participants list to EVERYONE in the room
+      io.to(`call:${channelId}`).emit('call:participants', {
         channelId,
         participants: Array.from(session.participants.entries()).map(([sid, p]) => ({
           socketId: sid,
@@ -68,6 +72,8 @@ function initVideoCallSocket(io) {
     socket.on('call:join', ({ channelId }) => {
       if (!channelId) return;
 
+      console.log(`[Socket] Received call:join from ${userName} for channel ${channelId}`);
+      
       const session = activeCalls.get(channelId);
       if (!session) {
         socket.emit('call:error', { message: 'No active call in this channel' });
@@ -79,7 +85,9 @@ function initVideoCallSocket(io) {
       if (alreadyIn) return;
 
       session.participants.set(socket.id, { userId, userName });
-      socket.join(`call:${channelId}`);
+      const roomId = `call:${channelId}`;
+      socket.join(roomId);
+      console.log(`[Socket] User ${userName} joined room: ${roomId}`);
 
       // Notify other call participants that someone new joined
       socket.to(`call:${channelId}`).emit('call:user-joined', {
@@ -89,8 +97,9 @@ function initVideoCallSocket(io) {
         userName
       });
 
-      // Send existing participants and chat history to the new joiner
-      socket.emit('call:participants', {
+      console.log(`[Socket] Broadcasting call:participants to room: call:${channelId}`);
+      // Send existing participants and chat history to EVERYONE in the room
+      io.to(`call:${channelId}`).emit('call:participants', {
         channelId,
         participants: Array.from(session.participants.entries()).map(([sid, p]) => ({
           socketId: sid,
@@ -222,6 +231,16 @@ function handleLeaveCall(io, socket, channelId) {
     socketId: socket.id,
     userId: participant.userId,
     userName: participant.userName
+  });
+
+  // Broadcast updated participants
+  io.to(`call:${channelId}`).emit('call:participants', {
+    channelId,
+    participants: Array.from(session.participants.entries()).map(([sid, p]) => ({
+      socketId: sid,
+      ...p
+    })),
+    chatHistory: session.chatMessages
   });
 
   // If no participants left, end the call

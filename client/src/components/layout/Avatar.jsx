@@ -11,6 +11,8 @@ export default function Avatar({ user, size = 32, fontSize = 11, style = {} }) {
   // Ensure avatarUrl is a string and not an object or empty
   if (typeof avatarUrl !== 'string' || !avatarUrl.trim()) {
     avatarUrl = null;
+  } else if (avatarUrl.startsWith('/uploads/')) {
+    avatarUrl = `https://team-collab-ntlm.onrender.com${avatarUrl}`;
   }
 
   return (

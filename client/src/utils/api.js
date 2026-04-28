@@ -5,6 +5,8 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' }
 });
 
+console.log('[DEBUG] axios baseURL is set to:', api.defaults.baseURL);
+
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('nexus_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
