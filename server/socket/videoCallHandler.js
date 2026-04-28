@@ -53,9 +53,6 @@ function initVideoCallSocket(io) {
     console.log(`[WS-CONNECT] socketId=${socket.id} userId=${userId} userName=${userName}`);
     console.log(`[WS-CONNECT] Current rooms:`, Array.from(socket.rooms));
 
-    console.log(`[WS-CONNECT] socketId=${socket.id} userId=${userId} userName=${userName}`);
-    console.log(`[WS-CONNECT] Current rooms at connect:`, Array.from(socket.rooms));
-
     // ── call:start ─────────────────────────────────────────────
     socket.on('call:start', async ({ channelId }) => {
       if (!channelId) return;
@@ -84,9 +81,17 @@ function initVideoCallSocket(io) {
         session.participants.set(socket.id, { userId, userName });
       }
       socket.join(roomId);
-      console.log(`[Socket] User ${userName} joined room: ${roomId}`);
+      console.log(`[Socket] User ${userName} started/joined call room: ${roomId}`);
 
-      console.log(`[Socket] Broadcasting call state to room: ${roomId}`);
+      // Notify existing participants that this specific user joined.
+      // Use socket.to() so the joiner does NOT receive their own event.
+      socket.to(roomId).emit('call:user-joined', {
+        channelId,
+        socketId: socket.id,
+        userId,
+        userName
+      });
+
       broadcastCallState(io, channelId, session);
     });
 
@@ -113,9 +118,16 @@ function initVideoCallSocket(io) {
         session.participants.set(socket.id, { userId, userName });
       }
       socket.join(roomId);
-      console.log(`[Socket] User ${userName} joined room: ${roomId}`);
+      console.log(`[Socket] User ${userName} joined call room: ${roomId}`);
 
-      console.log(`[Socket] Broadcasting call state to room: ${roomId}`);
+      // Notify existing participants that this specific user joined.
+      socket.to(roomId).emit('call:user-joined', {
+        channelId,
+        socketId: socket.id,
+        userId,
+        userName
+      });
+
       broadcastCallState(io, channelId, session);
     });
 
