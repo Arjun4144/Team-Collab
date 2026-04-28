@@ -4,8 +4,43 @@
  * Does NOT interact with any existing chat socket logic.
  */
 
+const Channel = require('../models/Channel');
+
 // In-memory store: { channelId: { participants: Map<socketId, { userId, userName }>, chatMessages: [] } }
 const activeCalls = new Map();
+
+const getCallRoomId = (channelId) => `call:${channelId}`;
+
+const getParticipants = (session) => (
+  Array.from(session.participants.entries()).map(([socketId, participant]) => ({
+    socketId,
+    ...participant
+  }))
+);
+
+const isChannelMember = async (channelId, userId) => {
+  const channel = await Channel.findById(channelId).select('members').lean();
+  if (!channel) return false;
+  return channel.members.some(memberId => memberId.toString() === userId);
+};
+
+const broadcastCallState = (io, channelId, session) => {
+  const roomId = getCallRoomId(channelId);
+  const participants = getParticipants(session);
+  const activePayload = {
+    channelId,
+    participants,
+    startedBy: session.startedBy
+  };
+
+  io.to(roomId).emit('call:participants', {
+    channelId,
+    participants,
+    chatHistory: session.chatMessages
+  });
+  io.to(roomId).emit('call:active', activePayload);
+  io.to(`channel:${channelId}`).emit('call:active', activePayload);
+};
 
 function initVideoCallSocket(io) {
   // Use the same io instance but a namespaced approach via event prefixes
@@ -22,8 +57,15 @@ function initVideoCallSocket(io) {
     console.log(`[WS-CONNECT] Current rooms at connect:`, Array.from(socket.rooms));
 
     // ── call:start ─────────────────────────────────────────────
-    socket.on('call:start', ({ channelId }) => {
+    socket.on('call:start', async ({ channelId }) => {
       if (!channelId) return;
+
+      const roomId = getCallRoomId(channelId);
+      const isMember = await isChannelMember(channelId, userId).catch(() => false);
+      if (!isMember) {
+        io.to(socket.id).emit('call:error', { channelId, message: 'You are not a member of this channel' });
+        return;
+      }
 
       // Create session if none exists
       if (!activeCalls.has(channelId)) {
@@ -37,89 +79,44 @@ function initVideoCallSocket(io) {
 
       const session = activeCalls.get(channelId);
 
-      // Prevent duplicate participant entries for the same user
-      const alreadyIn = Array.from(session.participants.values()).some(p => p.userId === userId);
-      if (alreadyIn) return;
-
-      session.participants.set(socket.id, { userId, userName });
-      const roomId = `call:${channelId}`;
+      // The participant map is the single source of truth for every caller.
+      if (!session.participants.has(socket.id)) {
+        session.participants.set(socket.id, { userId, userName });
+      }
       socket.join(roomId);
       console.log(`[Socket] User ${userName} joined room: ${roomId}`);
-      console.log(`[Socket] Broadcasting call:active to channel:${channelId}`);
 
-      // Notify everyone in the channel that a call is active
-      io.to(`channel:${channelId}`).emit('call:active', {
-        channelId,
-        participants: Array.from(session.participants.values()),
-        startedBy: session.startedBy
-      });
-
-      // Notify other call participants that someone new joined
-      socket.to(`call:${channelId}`).emit('call:user-joined', {
-        channelId,
-        socketId: socket.id,
-        userId,
-        userName
-      });
-
-      console.log(`[Socket] Broadcasting call:participants to room: call:${channelId}`);
-      // Send existing participants list to EVERYONE in the room
-      io.to(`call:${channelId}`).emit('call:participants', {
-        channelId,
-        participants: Array.from(session.participants.entries()).map(([sid, p]) => ({
-          socketId: sid,
-          ...p
-        })),
-        chatHistory: session.chatMessages
-      });
+      console.log(`[Socket] Broadcasting call state to room: ${roomId}`);
+      broadcastCallState(io, channelId, session);
     });
 
     // ── call:join ──────────────────────────────────────────────
-    socket.on('call:join', ({ channelId }) => {
+    socket.on('call:join', async ({ channelId }) => {
       if (!channelId) return;
 
       console.log(`[Socket] Received call:join from ${userName} for channel ${channelId}`);
-      
-      const session = activeCalls.get(channelId);
-      if (!session) {
-        socket.emit('call:error', { message: 'No active call in this channel' });
+      const roomId = getCallRoomId(channelId);
+      const isMember = await isChannelMember(channelId, userId).catch(() => false);
+      if (!isMember) {
+        io.to(socket.id).emit('call:error', { channelId, message: 'You are not a member of this channel' });
         return;
       }
 
-      // Prevent duplicate
-      const alreadyIn = Array.from(session.participants.values()).some(p => p.userId === userId);
-      if (alreadyIn) return;
+      const session = activeCalls.get(channelId);
+      if (!session) {
+        io.to(socket.id).emit('call:error', { channelId, message: 'No active call in this channel' });
+        return;
+      }
 
-      session.participants.set(socket.id, { userId, userName });
-      const roomId = `call:${channelId}`;
+      // The participant map is the single source of truth for every caller.
+      if (!session.participants.has(socket.id)) {
+        session.participants.set(socket.id, { userId, userName });
+      }
       socket.join(roomId);
       console.log(`[Socket] User ${userName} joined room: ${roomId}`);
 
-      // Notify other call participants that someone new joined
-      socket.to(`call:${channelId}`).emit('call:user-joined', {
-        channelId,
-        socketId: socket.id,
-        userId,
-        userName
-      });
-
-      console.log(`[Socket] Broadcasting call:participants to room: call:${channelId}`);
-      // Send existing participants and chat history to EVERYONE in the room
-      io.to(`call:${channelId}`).emit('call:participants', {
-        channelId,
-        participants: Array.from(session.participants.entries()).map(([sid, p]) => ({
-          socketId: sid,
-          ...p
-        })),
-        chatHistory: session.chatMessages
-      });
-
-      // Update everyone in the channel about the call state
-      io.to(`channel:${channelId}`).emit('call:active', {
-        channelId,
-        participants: Array.from(session.participants.values()),
-        startedBy: session.startedBy
-      });
+      console.log(`[Socket] Broadcasting call state to room: ${roomId}`);
+      broadcastCallState(io, channelId, session);
     });
 
     // ── call:leave ─────────────────────────────────────────────
@@ -132,13 +129,13 @@ function initVideoCallSocket(io) {
       if (!channelId) return;
       const session = activeCalls.get(channelId);
       if (session && session.participants.size > 0) {
-        socket.emit('call:active', {
+        io.to(socket.id).emit('call:active', {
           channelId,
-          participants: Array.from(session.participants.values()),
+          participants: getParticipants(session),
           startedBy: session.startedBy
         });
       } else {
-        socket.emit('call:ended', { channelId });
+        io.to(socket.id).emit('call:ended', { channelId });
       }
     });
 
@@ -235,39 +232,33 @@ function handleLeaveCall(io, socket, channelId) {
   const participant = session.participants.get(socket.id);
   if (!participant) return;
 
+  const roomId = getCallRoomId(channelId);
   session.participants.delete(socket.id);
-  socket.leave(`call:${channelId}`);
 
-  // Notify remaining participants
-  socket.to(`call:${channelId}`).emit('call:user-left', {
+  // Broadcast to the full call room before removing this socket from the room.
+  io.to(roomId).emit('call:user-left', {
     channelId,
     socketId: socket.id,
     userId: participant.userId,
     userName: participant.userName
   });
 
-  // Broadcast updated participants
-  io.to(`call:${channelId}`).emit('call:participants', {
+  io.to(roomId).emit('call:participants', {
     channelId,
-    participants: Array.from(session.participants.entries()).map(([sid, p]) => ({
-      socketId: sid,
-      ...p
-    })),
+    participants: getParticipants(session),
     chatHistory: session.chatMessages
   });
 
   // If no participants left, end the call
   if (session.participants.size === 0) {
     activeCalls.delete(channelId);
+    io.to(roomId).emit('call:ended', { channelId });
     io.to(`channel:${channelId}`).emit('call:ended', { channelId });
   } else {
-    // Update channel about active call state
-    io.to(`channel:${channelId}`).emit('call:active', {
-      channelId,
-      participants: Array.from(session.participants.values()),
-      startedBy: session.startedBy
-    });
+    broadcastCallState(io, channelId, session);
   }
+
+  socket.leave(roomId);
 }
 
 module.exports = { initVideoCallSocket };
