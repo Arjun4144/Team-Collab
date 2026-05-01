@@ -70,20 +70,10 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     }
 
     // Establish transceivers for both audio and video to reserve SDP placeholders
-    const streamToUse = localStreamRef.current || new MediaStream();
-    
-    const audioTrack = localStreamRef.current?.getAudioTracks()[0];
-    if (audioTrack) {
-      pc.addTransceiver(audioTrack, { direction: "sendrecv", streams: [streamToUse] });
-    } else {
-      pc.addTransceiver("audio", { direction: "sendrecv", streams: [streamToUse] });
-    }
-
-    const videoTrack = localStreamRef.current?.getVideoTracks()[0];
-    if (videoTrack) {
-      pc.addTransceiver(videoTrack, { direction: "sendrecv", streams: [streamToUse] });
-    } else {
-      pc.addTransceiver("video", { direction: "sendrecv", streams: [streamToUse] });
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        pc.addTrack(track, localStreamRef.current);
+      });
     }
 
     // Handle incoming remote tracks
@@ -191,17 +181,17 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         const newVideoTrack = stream.getVideoTracks()[0];
-        
+
         if (localStreamRef.current) {
           localStreamRef.current.addTrack(newVideoTrack);
         } else {
           localStreamRef.current = stream;
         }
-        
+
         setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
 
         Object.values(peerConnections.current).forEach((pc) => {
-          const transceiver = pc.getTransceivers().find(t => t.receiver.track.kind === "video");
+          const transceiver = pc.getTransceivers().find(t => t.receiver?.track?.kind === "video");
           if (transceiver && transceiver.sender) {
             transceiver.sender.replaceTrack(newVideoTrack);
           }
@@ -225,11 +215,14 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         localStreamRef.current.removeTrack(videoTrack);
         setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
       }
-      
+
       Object.values(peerConnections.current).forEach((pc) => {
-        const transceiver = pc.getTransceivers().find(t => t.receiver.track.kind === "video");
-        if (transceiver && transceiver.sender) {
-          transceiver.sender.replaceTrack(null);
+        const sender = pc.getSenders().find(s => s.track?.kind === "video");
+
+        if (sender) {
+          sender.replaceTrack(newVideoTrack);
+        } else {
+          pc.addTrack(newVideoTrack, localStreamRef.current);
         }
       });
 
@@ -246,18 +239,18 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         screenStreamRef.current.getTracks().forEach((t) => t.stop());
         screenStreamRef.current = null;
       }
-      
+
       // Restore camera video track in all peer connections
       const cameraTrack = localStreamRef.current?.getVideoTracks()[0] || null;
       Object.values(peerConnections.current).forEach((pc) => {
-        const transceiver = pc.getTransceivers().find((t) => t.receiver.track.kind === "video");
+        const transceiver = pc.getTransceivers().find((t) => t.receiver?.track?.kind === "video");
         if (transceiver && transceiver.sender) {
           transceiver.sender.replaceTrack(cameraTrack).catch(err => {
             console.error("[WebRTC] Error restoring camera track:", err);
           });
         }
       });
-      
+
       // Restore local UI stream to show camera
       if (localStreamRef.current) {
         const videoTrack = localStreamRef.current.getVideoTracks()[0];
@@ -273,11 +266,11 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     } else {
       // Screen sharing is generally not supported on most mobile browsers.
       const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      
+
       if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
         useStore.getState().showToast(
-          isMobile 
-            ? "Screen sharing is not supported on mobile browsers. Please use a desktop." 
+          isMobile
+            ? "Screen sharing is not supported on mobile browsers. Please use a desktop."
             : "Screen sharing is not supported in this browser (requires HTTPS)."
         );
         return;
@@ -285,16 +278,16 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
 
       try {
         // Some mobile browsers might have the API but fail on call.
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ 
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
-          audio: false 
+          audio: false
         });
         screenStreamRef.current = screenStream;
         const screenTrack = screenStream.getVideoTracks()[0];
 
         // Replace video track in all peer connections
         Object.values(peerConnections.current).forEach((pc) => {
-          const transceiver = pc.getTransceivers().find((t) => t.receiver.track.kind === "video");
+          const transceiver = pc.getTransceivers().find((t) => t.receiver?.track?.kind === "video");
           if (transceiver && transceiver.sender) {
             transceiver.sender.replaceTrack(screenTrack).catch(err => {
               console.error("[WebRTC] Error replacing track for screen share:", err);
@@ -358,7 +351,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       console.log("[WebRTC] Existing members:", members);
       for (const member of members) {
         if (member.userId === userId) continue; // Skip self
-        
+
         // Add to participants list
         setParticipants((prev) => {
           if (prev.find((p) => p.userId === member.userId)) return prev;
@@ -366,15 +359,23 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         });
 
         // Create peer connection and initiate offer (pass socketId for routing)
-        const pc = createPeerConnection(member.userId, member.socketId);
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit("call:offer", { toSocketId: member.socketId, offer, channelId });
-          console.log("[WebRTC] Sent offer to", member.userId, "socketId:", member.socketId);
-        } catch (err) {
-          console.error("[WebRTC] Error creating offer:", err);
-        }
+        pc.onnegotiationneeded = async () => {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            const targetSocketId = peerSocketIds.current[remoteUserId];
+            if (targetSocketId) {
+              socket.emit("call:offer", {
+                toSocketId: targetSocketId,
+                offer,
+                channelId,
+              });
+            }
+          } catch (err) {
+            console.error("[WebRTC] Negotiation error:", err);
+          }
+        };
       }
     };
 
@@ -382,7 +383,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     const onUserJoined = async ({ socketId: remoteSocketId, userId: remoteId, userName: remoteName, userObject, videoOff, muted }) => {
       console.log("[WebRTC] User joined:", remoteId, remoteName, "socketId:", remoteSocketId);
       if (remoteId === userId) return; // Skip self
-      
+
       setParticipants((prev) => {
         if (prev.find((p) => p.userId === remoteId)) return prev;
         return [...prev, { userId: remoteId, userName: remoteName, muted: muted || false, videoOff: videoOff || false, hand: false, userObject }];
@@ -396,7 +397,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     const onOffer = async ({ fromSocketId, fromUserId, fromUserName, offer, userObject }) => {
       console.log("[WebRTC] Received offer from", fromUserId);
       const remoteId = fromUserId || fromSocketId;
-      
+
       // Add to participants if not already there
       setParticipants((prev) => {
         if (prev.find((p) => p.userId === remoteId)) return prev;
@@ -406,7 +407,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       const pc = createPeerConnection(remoteId, fromSocketId); // Pass the socketId for routing
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        
+
         // Flush ICE queue
         if (iceCandidateQueue.current[remoteId]) {
           for (const cand of iceCandidateQueue.current[remoteId]) {
@@ -430,7 +431,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       console.log("[WebRTC] Received answer from", fromUserId);
       const remoteId = fromUserId || fromSocketId;
       const pc = peerConnections.current[remoteId];
-      
+
       // Update participant with user object if available
       if (userObject) {
         setParticipants((prev) =>
@@ -441,7 +442,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
           console.log("[WebRTC] Set remote description from answer (userId:", remoteId, ")");
-          
+
           // Flush ICE queue
           if (iceCandidateQueue.current[remoteId]) {
             for (const cand of iceCandidateQueue.current[remoteId]) {
@@ -464,7 +465,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       const pc = peerConnections.current[remoteId];
       if (pc) {
         if (pc.remoteDescription && pc.remoteDescription.type) {
-          try { 
+          try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
           }
           catch (e) { console.error("[WebRTC] ICE candidate error for", remoteId, ":", e); }
@@ -488,13 +489,13 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     const onParticipantUpdate = ({ socketId, userId: remoteId, muted, videoOff, hand, screenSharing }) => {
       setParticipants((prev) =>
         prev.map((p) => p.userId === remoteId
-          ? { 
-              ...p, 
-              ...(muted !== undefined && { muted }), 
-              ...(videoOff !== undefined && { videoOff }), 
-              ...(hand !== undefined && { hand }),
-              ...(screenSharing !== undefined && { screenSharing })
-            }
+          ? {
+            ...p,
+            ...(muted !== undefined && { muted }),
+            ...(videoOff !== undefined && { videoOff }),
+            ...(hand !== undefined && { hand }),
+            ...(screenSharing !== undefined && { screenSharing })
+          }
           : p
         )
       );
