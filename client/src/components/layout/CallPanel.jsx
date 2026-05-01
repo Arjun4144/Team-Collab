@@ -115,15 +115,17 @@ function VideoTile({ participant, stream, isLocal, large }) {
       position: "relative",
       borderRadius: large ? 12 : 8,
       overflow: "hidden",
-      background: "#3c4043",
+      background: "#202124",
       border: speaking
-        ? `3px solid #8ab4f8`
-        : "3px solid transparent",
-      transition: "border-color 0.2s",
+        ? `2px solid #8ab4f8`
+        : "2px solid rgba(255,255,255,0.1)",
+      transition: "all 0.2s",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      minHeight: large ? 340 : 160,
+      minHeight: large ? 300 : 100,
+      width: "100%",
+      height: "100%",
       aspectRatio: "16/9",
     }}>
       {/* Actual video */}
@@ -135,7 +137,9 @@ function VideoTile({ participant, stream, isLocal, large }) {
           muted={isLocal}
           style={{
             position: "absolute", inset: 0, width: "100%", height: "100%",
-            objectFit: "cover", zIndex: 1,
+            objectFit: participant.screenSharing ? "contain" : "cover", 
+            zIndex: 1,
+            background: "#000"
           }}
         />
       )}
@@ -469,11 +473,14 @@ export default function CallPanel({
   const allParticipants = [localParticipant, ...participants];
   const count = allParticipants.length;
 
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
   // Grid columns
   const cols = count <= 1 ? 1 : count <= 4 ? 2 : 3;
 
-  // Spotlight: loudest speaking remote, fallback local
-  const spotlightP = participants.find((p) => remoteStreams[p.userId]) || localParticipant;
+  // Spotlight: prioritize anyone sharing their screen, then loudest speaking remote, fallback local
+  const screenSharer = participants.find(p => p.screenSharing && remoteStreams[p.userId]);
+  const spotlightP = screenSharer || participants.find((p) => remoteStreams[p.userId]) || localParticipant;
   const stripP = allParticipants.filter((p) => p.userId !== spotlightP.userId);
 
   return (
@@ -505,7 +512,7 @@ export default function CallPanel({
 
       <div className="call-panel" style={{
         display: "flex", flexDirection: "column",
-        height: "100%", background: "#202124",
+        height: "100%", background: "#121212",
         color: "#fff", overflow: "hidden",
         borderRadius: 16,
       }}>
@@ -513,18 +520,15 @@ export default function CallPanel({
         {/* ── TOP BAR ──────────────────────────────────────────────────── */}
         <div style={{
           padding: "12px 20px", flexShrink: 0,
-          borderBottom: "1px solid rgba(255,255,255,0.05)",
-          background: "rgba(255,255,255,0.02)",
-          backdropFilter: "blur(20px)",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          background: "rgba(255,255,255,0.03)",
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {/* Live dot */}
             <div style={{ position: "relative", width: 10, height: 10 }}>
               <div style={{
                 width: 10, height: 10, borderRadius: "50%",
                 background: connectionStatus === "connected" ? "#22c55e" : "#f59e0b",
-                boxShadow: connectionStatus === "connected" ? "0 0 8px #22c55e" : "0 0 8px #f59e0b",
               }} />
               <div style={{
                 position: "absolute", inset: 0, borderRadius: "50%",
@@ -532,46 +536,40 @@ export default function CallPanel({
                 animation: "ping 1.6s ease-out infinite",
               }} />
             </div>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.02em" }}>
-                # {channelName}
-              </div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 1 }}>
-                {count} participant{count !== 1 ? "s" : ""} · {formatDuration(callDuration)}
-              </div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>
+              Nexus Call | {channelName}
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            {/* Quality badge */}
             <div style={{
               display: "flex", alignItems: "center", gap: 5,
-              background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.2)",
-              borderRadius: 8, padding: "4px 10px",
-              color: "#22c55e", fontSize: 11,
+              background: "rgba(34,197,94,0.1)", borderRadius: 6, padding: "3px 8px",
+              color: "#22c55e", fontSize: 11, fontWeight: 600
             }}>
-              <Icon path={PATHS.wifi} size={11} /> HD
+              <Icon path={PATHS.wifi} size={10} /> HD
             </div>
-
-            {/* Layout toggle */}
-            <CtrlBtn
-              large={false}
-              iconPath={layout === "grid" ? PATHS.users : PATHS.grid}
-              label={layout === "grid" ? "Focus" : "Grid"}
-              onClick={() => setLayout((l) => l === "grid" ? "spotlight" : "grid")}
-            />
-            <CtrlBtn large={false} iconPath={PATHS.settings} label="Settings" />
+            <button 
+              onClick={() => setLayout(l => l === "grid" ? "spotlight" : "grid")}
+              style={{
+                background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 6,
+                padding: "4px 10px", color: "#fff", fontSize: 11, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 6
+              }}
+            >
+              <Icon path={layout === "grid" ? PATHS.users : PATHS.grid} size={14} />
+              {layout === "grid" ? "Focus" : "Grid"}
+            </button>
           </div>
         </div>
 
         {/* ── CONTENT AREA ─────────────────────────────────────────────── */}
-        <div style={{ flex: 1, padding: 14, display: "flex", gap: 12, overflow: "hidden", minHeight: 0 }}>
+        <div style={{ flex: 1, padding: 12, display: "flex", gap: 12, overflow: "hidden", minHeight: 0 }}>
 
           {/* Video grid */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 12, overflow: "hidden" }}>
             {layout === "spotlight" ? (
               <>
-                {/* Spotlight tile */}
                 <div style={{ flex: 1, minHeight: 0 }}>
                   <VideoTile
                     participant={spotlightP}
@@ -580,11 +578,11 @@ export default function CallPanel({
                     large
                   />
                 </div>
-                {/* Strip */}
                 {stripP.length > 0 && (
                   <div className="tile-grid" style={{
-                    gridTemplateColumns: `repeat(${Math.min(stripP.length, 5)}, 1fr)`,
+                    gridTemplateColumns: `repeat(${Math.min(stripP.length, 6)}, 1fr)`,
                     flexShrink: 0,
+                    height: 120
                   }}>
                     {stripP.map((p) => (
                       <VideoTile
@@ -599,9 +597,9 @@ export default function CallPanel({
               </>
             ) : (
               <div className="tile-grid" style={{
-                flex: 1, minHeight: 0, overflow: "auto",
+                flex: 1, minHeight: 0, overflowY: "auto",
                 gridTemplateColumns: `repeat(${cols}, 1fr)`,
-                gridAutoRows: count <= 2 ? "1fr" : "minmax(160px, 1fr)",
+                gridAutoRows: count <= 2 ? "1fr" : "minmax(200px, 1fr)",
               }}>
                 {allParticipants.map((p) => (
                   <VideoTile
@@ -615,23 +613,20 @@ export default function CallPanel({
               </div>
             )}
 
-            {/* Screen share banner */}
             {isScreenSharing && (
               <div style={{
-                flexShrink: 0,
-                background: "rgba(108,99,255,0.1)",
-                border: "1px dashed rgba(108,99,255,0.5)",
-                borderRadius: 14, padding: "12px 20px",
-                display: "flex", alignItems: "center", gap: 10,
-                color: "#a89cff", fontSize: 13,
-                animation: "fadeIn 0.3s ease",
+                flexShrink: 0, background: "rgba(138,180,248,0.1)",
+                border: "1px solid rgba(138,180,248,0.3)",
+                borderRadius: 12, padding: "8px 16px",
+                display: "flex", alignItems: "center", gap: 12,
+                color: "#8ab4f8", fontSize: 13,
               }}>
-                <Icon path={PATHS.monitor} size={18} />
-                <span style={{ flex: 1 }}>You are sharing your screen</span>
+                <Icon path={PATHS.monitor} size={16} />
+                <span>You are sharing your screen</span>
                 <button onClick={toggleScreenShare} style={{
-                  background: "rgba(239,68,68,0.2)", border: "1px solid rgba(239,68,68,0.4)",
-                  borderRadius: 8, padding: "4px 14px", color: "#ff8080",
-                  cursor: "pointer", fontSize: 12, fontFamily: "'DM Sans', sans-serif",
+                  marginLeft: "auto", background: "#ea4335", border: "none",
+                  borderRadius: 6, padding: "4px 12px", color: "#fff",
+                  cursor: "pointer", fontSize: 12, fontWeight: 600
                 }}>Stop sharing</button>
               </div>
             )}
@@ -652,148 +647,95 @@ export default function CallPanel({
         {/* ── CONTROL BAR ──────────────────────────────────────────────── */}
         <div style={{
           flexShrink: 0,
-          padding: "14px 24px 18px",
-          borderTop: "1px solid rgba(255,255,255,0.05)",
-          background: "rgba(10,11,16,0.96)",
-          backdropFilter: "blur(20px)",
-          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+          padding: "16px 24px",
+          borderTop: "1px solid rgba(255,255,255,0.1)",
+          background: "#1a1b1e",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
-          {/* Self info */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 150 }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: "50%", position: "relative",
-              background: `linear-gradient(135deg, ${userColor(currentUser?._id)}cc, ${userColor(currentUser?._id)}44)`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 14, fontWeight: 700,
-              boxShadow: !isMuted ? `0 0 0 3px ${userColor(currentUser?._id)}55` : "none",
-              transition: "box-shadow 0.3s",
-            }}>
-              {(currentUser?.avatar?.url || currentUser?.avatar) ? (
-                <img src={currentUser.avatar.url || currentUser.avatar} alt={currentUser.username} style={{width:'100%', height:'100%', borderRadius:'50%', objectFit:'cover'}} />
-              ) : (
-                initials(currentUser?.username)
-              )}
-              {!isMuted && (
-                <div style={{
-                  position: "absolute", bottom: -2, right: -2,
-                  width: 12, height: 12, borderRadius: "50%",
-                  background: "#22c55e", border: "2px solid #0a0b10",
-                  zIndex: 2,
-                }} />
-              )}
-            </div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{currentUser?.username}</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-                {isMuted ? "🔇 Muted" : "🎙 Live"}
-              </div>
+          {/* Self info / Left section */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.6)" }}>
+              {formatDuration(callDuration)} | # {channelName}
             </div>
           </div>
 
-          {/* Main controls */}
+          {/* Main controls / Center section */}
           <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: "rgba(255,255,255,0.025)",
-            border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: 22, padding: "10px 16px",
+            display: "flex", alignItems: "center", gap: 10,
           }}>
             <CtrlBtn
               iconPath={isMuted ? PATHS.micOff : PATHS.mic}
               label={isMuted ? "Unmute" : "Mute"}
               active={isMuted}
               onClick={toggleMute}
+              large={false}
             />
             <CtrlBtn
               iconPath={isVideoOff ? PATHS.videoOff : PATHS.video}
               label={isVideoOff ? "Start Cam" : "Stop Cam"}
               active={isVideoOff}
               onClick={toggleVideo}
+              large={false}
             />
-            <CtrlBtn
-              iconPath={PATHS.monitor}
-              label="Screen"
-              active={isScreenSharing}
-              onClick={toggleScreenShare}
-            />
+            {!isMobile && (
+              <CtrlBtn
+                iconPath={PATHS.monitor}
+                label="Screen Share"
+                active={isScreenSharing}
+                onClick={toggleScreenShare}
+                large={false}
+              />
+            )}
             <CtrlBtn
               iconPath={isDeafened ? PATHS.speakerOff : PATHS.speaker}
               label={isDeafened ? "Undeafen" : "Deafen"}
               active={isDeafened}
               onClick={toggleDeafen}
+              large={false}
             />
             <CtrlBtn
               iconPath={PATHS.hand}
               label="Raise Hand"
               active={isHandRaised}
               onClick={toggleHand}
+              large={false}
             />
-
-            {/* Divider */}
-            <div style={{ width: 1, height: 32, background: "rgba(255,255,255,0.08)", margin: "0 4px" }} />
-
             <CtrlBtn
               iconPath={PATHS.chat}
               label="Chat"
               active={chatOpen}
               onClick={() => setChatOpen((c) => !c)}
+              large={false}
             />
 
-            {/* End call */}
+            {/* End call - distinct red button */}
             <button
               onClick={handleLeave}
               title="Leave call"
               style={{
                 background: "#ea4335",
                 border: "none",
-                borderRadius: "50%", width: 56, height: 56,
+                borderRadius: 24, 
+                width: 64, height: 40,
                 display: "flex", alignItems: "center", justifyContent: "center",
                 cursor: "pointer", color: "#fff",
-                transition: "background 0.2s", marginLeft: 8,
+                transition: "all 0.2s",
+                marginLeft: 12,
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "#f28b82"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "#ea4335"; }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "#f28b82"; e.currentTarget.style.width = "72px"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "#ea4335"; e.currentTarget.style.width = "64px"; }}
             >
-              <Icon path={PATHS.phoneOff} size={22} />
+              <Icon path={PATHS.phoneOff} size={20} />
             </button>
           </div>
 
-          {/* Participant avatars */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 150, justifyContent: "flex-end" }}>
-            <div style={{ display: "flex" }}>
-              {allParticipants.slice(0, 4).map((p, i) => (
-                <div key={p.userId} style={{
-                  width: 28, height: 28, borderRadius: "50%",
-                  background: "#5f6368",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 10, fontWeight: 600,
-                  color: "#e8eaed",
-                  border: "2px solid #202124",
-                  marginLeft: i === 0 ? 0 : -8,
-                  zIndex: 4 - i, position: "relative", overflow: "hidden"
-                }}>
-                  {(p.userObject?.avatar?.url || p.userObject?.avatar) ? (
-                    <img src={p.userObject.avatar.url || p.userObject.avatar} alt={p.userName} style={{width:'100%', height:'100%', objectFit:'cover'}} />
-                  ) : (
-                    initials(p.userName)
-                  )}
-                </div>
-              ))}
-              {allParticipants.length > 4 && (
-                <div style={{
-                  width: 28, height: 28, borderRadius: "50%",
-                  background: "#3c4043",
-                  border: "2px solid #202124", marginLeft: -8,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 10, fontWeight: 600, color: "#e8eaed",
-                  zIndex: 0, position: "relative",
-                }}>
-                  +{allParticipants.length - 4}
-                </div>
-              )}
+          {/* Right section / Participants */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, justifyContent: "flex-end" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon path={PATHS.users} size={16} />
+              <span style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.8)" }}>{count}</span>
             </div>
-            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-              {count} in call
-            </span>
+            <CtrlBtn large={false} iconPath={PATHS.settings} label="Settings" />
           </div>
         </div>
       </div>

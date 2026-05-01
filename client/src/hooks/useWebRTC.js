@@ -251,28 +251,55 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       const cameraTrack = localStreamRef.current?.getVideoTracks()[0] || null;
       Object.values(peerConnections.current).forEach((pc) => {
         const transceiver = pc.getTransceivers().find((t) => t.receiver.track.kind === "video");
-        if (transceiver && transceiver.sender) transceiver.sender.replaceTrack(cameraTrack);
+        if (transceiver && transceiver.sender) {
+          transceiver.sender.replaceTrack(cameraTrack).catch(err => {
+            console.error("[WebRTC] Error restoring camera track:", err);
+          });
+        }
       });
       
       // Restore local UI stream to show camera
-      const restoredStream = new MediaStream();
-      if (cameraTrack) restoredStream.addTrack(cameraTrack);
-      const audioTrack = localStreamRef.current?.getAudioTracks()[0];
-      if (audioTrack) restoredStream.addTrack(audioTrack);
-      setLocalStream(restoredStream);
+      if (localStreamRef.current) {
+        const videoTrack = localStreamRef.current.getVideoTracks()[0];
+        const audioTrack = localStreamRef.current.getAudioTracks()[0];
+        const restoredStream = new MediaStream();
+        if (videoTrack) restoredStream.addTrack(videoTrack);
+        if (audioTrack) restoredStream.addTrack(audioTrack);
+        setLocalStream(restoredStream);
+      }
 
       setIsScreenSharing(false);
       if (socket) socket.emit("call:screen-share", { channelId, userId, sharing: false });
     } else {
+      // Screen sharing is generally not supported on most mobile browsers.
+      const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        useStore.getState().showToast(
+          isMobile 
+            ? "Screen sharing is not supported on mobile browsers. Please use a desktop." 
+            : "Screen sharing is not supported in this browser (requires HTTPS)."
+        );
+        return;
+      }
+
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        // Some mobile browsers might have the API but fail on call.
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ 
+          video: true,
+          audio: false 
+        });
         screenStreamRef.current = screenStream;
         const screenTrack = screenStream.getVideoTracks()[0];
 
         // Replace video track in all peer connections
         Object.values(peerConnections.current).forEach((pc) => {
           const transceiver = pc.getTransceivers().find((t) => t.receiver.track.kind === "video");
-          if (transceiver && transceiver.sender) transceiver.sender.replaceTrack(screenTrack);
+          if (transceiver && transceiver.sender) {
+            transceiver.sender.replaceTrack(screenTrack).catch(err => {
+              console.error("[WebRTC] Error replacing track for screen share:", err);
+            });
+          }
         });
 
         // Update local UI stream to show screen share
@@ -281,12 +308,21 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         if (audioTrack) newStream.addTrack(audioTrack);
         setLocalStream(newStream);
 
-        screenTrack.onended = () => toggleScreenShare(); // user stops via browser UI
+        screenTrack.onended = () => {
+          if (isScreenSharing) toggleScreenShare();
+        };
+
         setIsScreenSharing(true);
         if (socket) socket.emit("call:screen-share", { channelId, userId, sharing: true });
       } catch (err) {
         console.error("[WebRTC] Screen share error:", err);
-        useStore.getState().showToast("Screen sharing cancelled or unsupported.");
+        if (err.name === 'NotAllowedError') {
+          useStore.getState().showToast("Screen share permission denied.");
+        } else if (isMobile) {
+          useStore.getState().showToast("Screen sharing is restricted by your mobile browser.");
+        } else {
+          useStore.getState().showToast("Failed to start screen share. Please try again.");
+        }
       }
     }
   }, [isScreenSharing, socket, channelId, userId]);
@@ -296,7 +332,9 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     setIsDeafened((d) => {
       const next = !d;
       Object.values(remoteStreams).forEach((stream) => {
-        stream.getAudioTracks().forEach((t) => { t.enabled = !next; });
+        if (stream) {
+          stream.getAudioTracks().forEach((t) => { t.enabled = !next; });
+        }
       });
       return next;
     });
