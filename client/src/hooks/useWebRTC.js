@@ -182,54 +182,71 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         const newVideoTrack = stream.getVideoTracks()[0];
 
+        // Add to local stream
         if (localStreamRef.current) {
           localStreamRef.current.addTrack(newVideoTrack);
         } else {
-          localStreamRef.current = stream;
+          localStreamRef.current = new MediaStream([newVideoTrack]);
         }
 
         setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
 
-        Object.values(peerConnections.current).forEach((pc) => {
-          const transceiver = pc.getTransceivers().find(t => t.receiver?.track?.kind === "video");
-          if (transceiver && transceiver.sender) {
-            transceiver.sender.replaceTrack(newVideoTrack);
+        // 🔥 Add track to ALL peer connections
+        Object.entries(peerConnections.current).forEach(([remoteUserId, pc]) => {
+          pc.addTrack(newVideoTrack, localStreamRef.current);
+        });
+
+        // 🔥 FORCE renegotiation manually (important)
+        Object.entries(peerConnections.current).forEach(async ([remoteUserId, pc]) => {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            const targetSocketId = peerSocketIds.current[remoteUserId];
+            if (targetSocketId) {
+              socket.emit("call:offer", {
+                toSocketId: targetSocketId,
+                offer,
+                channelId,
+              });
+            }
+          } catch (err) {
+            console.error("[WebRTC] renegotiation error:", err);
           }
         });
 
         newVideoTrack.onended = () => {
           setIsVideoOff(true);
-          if (socket) socket.emit("call:video-toggle", { channelId, userId, videoOff: true });
         };
 
         setIsVideoOff(false);
-        if (socket) socket.emit("call:video-toggle", { channelId, userId, videoOff: false });
+
       } catch (err) {
-        console.error("Camera access failed", err);
-        useStore.getState().showToast("Camera access denied or hardware not found.");
+        console.error("Camera access failed:", err);
       }
     } else {
+      // 🔴 TURN OFF VIDEO
+
       const videoTrack = localStreamRef.current?.getVideoTracks()[0];
+
       if (videoTrack) {
         videoTrack.stop();
         localStreamRef.current.removeTrack(videoTrack);
+
         setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
+
+        // Remove sender track from peers
+        Object.values(peerConnections.current).forEach((pc) => {
+          const sender = pc.getSenders().find(s => s.track?.kind === "video");
+          if (sender) {
+            pc.removeTrack(sender);
+          }
+        });
       }
 
-      Object.values(peerConnections.current).forEach((pc) => {
-        const sender = pc.getSenders().find(s => s.track?.kind === "video");
-
-        if (sender) {
-          sender.replaceTrack(newVideoTrack);
-        } else {
-          pc.addTrack(newVideoTrack, localStreamRef.current);
-        }
-      });
-
       setIsVideoOff(true);
-      if (socket) socket.emit("call:video-toggle", { channelId, userId, videoOff: true });
     }
-  }, [isVideoOff, socket, channelId, userId]);
+  }, [isVideoOff, socket, channelId]);
 
   // ── Toggle screen share ─────────────────────────────────────────────────────
   const toggleScreenShare = useCallback(async () => {
