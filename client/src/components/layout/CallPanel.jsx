@@ -48,9 +48,9 @@ function formatDuration(seconds) {
 
 // ─── Avatar initials from name ─────────────────────────────────────────────
 function initials(name = "") {
-  if (!name || typeof name !== 'string') return '?';
+  if (!name || typeof name !== "string") return "?";
   const parts = name.trim().split(/\s+/);
-  if (parts.length === 0) return '?';
+  if (parts.length === 0) return "?";
   if (parts.length === 1) {
     const first = parts[0];
     if (first.length === 1) return first.toUpperCase();
@@ -70,24 +70,51 @@ function userColor(userId = "") {
 // ─── Video tile for one participant ───────────────────────────────────────
 function VideoTile({ participant, stream, isLocal, large }) {
   const videoRef = useRef(null);
-  const color = userColor(participant.userId);
   const [speaking, setSpeaking] = useState(false);
   const analyserRef = useRef(null);
   const animFrameRef = useRef(null);
-  const hasVideo = stream && (!participant.videoOff || participant.screenSharing);
+  const audioCtxRef = useRef(null);
 
-  // Attach stream to <video>
+  // ✅ FIX: derive hasVideo fresh on every render so turning video on/off
+  // immediately shows/hides the <video> element without needing a re-mount.
+  const hasVideo = !!stream && (!participant.videoOff || participant.screenSharing);
+
+  // ✅ FIX: always sync srcObject so toggling video updates the element in-place
+  // rather than relying on the effect only running when `stream` identity changes.
   useEffect(() => {
-    if (videoRef.current && stream && hasVideo) {
-      videoRef.current.srcObject = stream;
+    const el = videoRef.current;
+    if (!el) return;
+    if (hasVideo && stream) {
+      if (el.srcObject !== stream) el.srcObject = stream;
+    } else {
+      el.srcObject = null;
     }
   }, [stream, hasVideo]);
 
   // Audio level detection for speaking indicator
   useEffect(() => {
-    if (!stream || participant.muted) { setSpeaking(false); return; }
+    // Clean up any previous context first
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close();
+      audioCtxRef.current = null;
+    }
+    cancelAnimationFrame(animFrameRef.current);
+
+    if (!stream || participant.muted) {
+      setSpeaking(false);
+      return;
+    }
+
+    // Only analyse audio tracks that are actually active
+    const audioTracks = stream.getAudioTracks();
+    if (!audioTracks.length || !audioTracks[0].enabled) {
+      setSpeaking(false);
+      return;
+    }
+
     try {
       const ctx = new AudioContext();
+      audioCtxRef.current = ctx;
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
@@ -101,14 +128,18 @@ function VideoTile({ participant, stream, isLocal, large }) {
         animFrameRef.current = requestAnimationFrame(check);
       };
       check();
-      return () => {
-        cancelAnimationFrame(animFrameRef.current);
-        ctx.close();
-      };
-    } catch (_) { /* AudioContext not available in some environments */ }
+    } catch (_) {
+      /* AudioContext not available in some environments */
+    }
+
+    return () => {
+      cancelAnimationFrame(animFrameRef.current);
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+        audioCtxRef.current = null;
+      }
+    };
   }, [stream, participant.muted]);
-
-
 
   return (
     <div style={{
@@ -117,9 +148,9 @@ function VideoTile({ participant, stream, isLocal, large }) {
       overflow: "hidden",
       background: "#202124",
       border: speaking
-        ? `2px solid #8ab4f8`
+        ? "2px solid #8ab4f8"
         : "2px solid rgba(255,255,255,0.1)",
-      transition: "all 0.2s",
+      transition: "border-color 0.2s",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
@@ -128,21 +159,22 @@ function VideoTile({ participant, stream, isLocal, large }) {
       height: "100%",
       aspectRatio: "16/9",
     }}>
-      {/* Actual video */}
-      {hasVideo && (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted={isLocal}
-          style={{
-            position: "absolute", inset: 0, width: "100%", height: "100%",
-            objectFit: participant.screenSharing ? "contain" : "cover", 
-            zIndex: 1,
-            background: "#000"
-          }}
-        />
-      )}
+      {/* Actual video — always rendered so srcObject swaps work instantly */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted={isLocal}
+        style={{
+          position: "absolute", inset: 0, width: "100%", height: "100%",
+          objectFit: participant.screenSharing ? "contain" : "cover",
+          zIndex: 1,
+          background: "#000",
+          // ✅ FIX: hide rather than unmount so the element is always available
+          // for srcObject assignment; toggling visibility avoids layout shifts too.
+          display: hasVideo ? "block" : "none",
+        }}
+      />
 
       {/* Avatar fallback when no video */}
       {!hasVideo && (
@@ -157,10 +189,10 @@ function VideoTile({ participant, stream, isLocal, large }) {
             overflow: "hidden",
           }}>
             {(participant.userObject?.avatar?.url || participant.userObject?.avatar) ? (
-              <img 
-                src={participant.userObject.avatar.url || participant.userObject.avatar} 
-                alt={participant.userName} 
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+              <img
+                src={participant.userObject.avatar.url || participant.userObject.avatar}
+                alt={participant.userName}
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
               />
             ) : (
               initials(participant.userName)
@@ -205,7 +237,7 @@ function VideoTile({ participant, stream, isLocal, large }) {
             background: "rgba(0,0,0,0.6)", borderRadius: "50%", padding: 6,
             display: "flex", alignItems: "center", justifyContent: "center", color: "#fbbc04"
           }} title="Hand raised">
-            <span style={{fontSize: 14}}>✋</span>
+            <span style={{ fontSize: 14 }}>✋</span>
           </div>
         )}
         {participant.isHost && (
@@ -213,7 +245,7 @@ function VideoTile({ participant, stream, isLocal, large }) {
             background: "rgba(0,0,0,0.6)", borderRadius: "50%", padding: 6,
             display: "flex", alignItems: "center", justifyContent: "center", color: "#8ab4f8"
           }} title="Host">
-            <span style={{fontSize: 14}}>👑</span>
+            <span style={{ fontSize: 14 }}>👑</span>
           </div>
         )}
       </div>
@@ -224,10 +256,10 @@ function VideoTile({ participant, stream, isLocal, large }) {
 // ─── Control button ────────────────────────────────────────────────────────
 function CtrlBtn({ iconPath, label, active, danger, onClick, large = true }) {
   const [hovered, setHovered] = useState(false);
-  
+
   let bg = "#3c4043";
   let color = "#e8eaed";
-  
+
   if (danger) {
     bg = hovered ? "#f28b82" : "#ea4335";
     color = "#fff";
@@ -295,7 +327,6 @@ function ChatPanel({ onClose, socket, channelId, currentUser, participants }) {
       text: input.trim(),
       time: timestamp,
     };
-    // Emit with all fields so server can broadcast them
     socket.emit("call:chat-message", {
       channelId,
       id: msg.id,
@@ -429,10 +460,9 @@ export default function CallPanel({
 
   const joinedChannelRef = useRef(null);
 
-  // Auto-join on mount - delay slightly to ensure socket listeners are attached
+  // Auto-join on mount — small delay ensures socket listeners are attached first
   useEffect(() => {
     if (joinedChannelRef.current === channelId) return;
-
     const timer = setTimeout(() => {
       joinedChannelRef.current = channelId;
       joinCall();
@@ -440,24 +470,23 @@ export default function CallPanel({
     return () => clearTimeout(timer);
   }, [joinCall, channelId]);
 
-  // Clean up and release hardware if the user navigates away without clicking End Call
-  useEffect(() => {
-    return () => {
-      leaveCall();
-    };
-  }, [leaveCall]);
+  // ✅ FIX: removed the duplicate leaveCall() cleanup effect that was calling
+  // leaveCall() on every render cycle due to the function reference changing.
+  // useWebRTC's own cleanup effect already handles this on unmount.
 
-  // Notify parent component of participant count changes
+  // Notify parent of participant count changes
   useEffect(() => {
     if (onParticipantCountChange) {
-      onParticipantCountChange(participants.length);
+      onParticipantCountChange(participants.length + 1); // +1 for local user
     }
   }, [participants.length, onParticipantCountChange]);
 
-  const handleLeave = () => {
+  const handleLeave = useCallback(() => {
     leaveCall();
     if (onLeave) onLeave();
-  };
+  }, [leaveCall, onLeave]);
+
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   // Build all tiles: local + remote participants
   const localParticipant = {
@@ -473,12 +502,10 @@ export default function CallPanel({
   const allParticipants = [localParticipant, ...participants];
   const count = allParticipants.length;
 
-  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
   // Grid columns
   const cols = count <= 1 ? 1 : count <= 4 ? 2 : 3;
 
-  // Spotlight: prioritize anyone sharing their screen, then loudest speaking remote, fallback local
+  // Spotlight: prioritize screen sharer, then first remote with a stream, fallback to local
   const screenSharer = participants.find(p => p.screenSharing && remoteStreams[p.userId]);
   const spotlightP = screenSharer || participants.find((p) => remoteStreams[p.userId]) || localParticipant;
   const stripP = allParticipants.filter((p) => p.userId !== spotlightP.userId);
@@ -545,16 +572,16 @@ export default function CallPanel({
             <div style={{
               display: "flex", alignItems: "center", gap: 5,
               background: "rgba(34,197,94,0.1)", borderRadius: 6, padding: "3px 8px",
-              color: "#22c55e", fontSize: 11, fontWeight: 600
+              color: "#22c55e", fontSize: 11, fontWeight: 600,
             }}>
               <Icon path={PATHS.wifi} size={10} /> HD
             </div>
-            <button 
+            <button
               onClick={() => setLayout(l => l === "grid" ? "spotlight" : "grid")}
               style={{
                 background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 6,
                 padding: "4px 10px", color: "#fff", fontSize: 11, cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 6
+                display: "flex", alignItems: "center", gap: 6,
               }}
             >
               <Icon path={layout === "grid" ? PATHS.users : PATHS.grid} size={14} />
@@ -582,7 +609,7 @@ export default function CallPanel({
                   <div className="tile-grid" style={{
                     gridTemplateColumns: `repeat(${Math.min(stripP.length, 6)}, 1fr)`,
                     flexShrink: 0,
-                    height: 120
+                    height: 120,
                   }}>
                     {stripP.map((p) => (
                       <VideoTile
@@ -626,7 +653,7 @@ export default function CallPanel({
                 <button onClick={toggleScreenShare} style={{
                   marginLeft: "auto", background: "#ea4335", border: "none",
                   borderRadius: 6, padding: "4px 12px", color: "#fff",
-                  cursor: "pointer", fontSize: 12, fontWeight: 600
+                  cursor: "pointer", fontSize: 12, fontWeight: 600,
                 }}>Stop sharing</button>
               </div>
             )}
@@ -652,17 +679,15 @@ export default function CallPanel({
           background: "#1a1b1e",
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
-          {/* Self info / Left section */}
+          {/* Left: timer + channel */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 500, color: "rgba(255,255,255,0.6)" }}>
               {formatDuration(callDuration)} | # {channelName}
             </div>
           </div>
 
-          {/* Main controls / Center section */}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 10,
-          }}>
+          {/* Center: controls */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <CtrlBtn
               iconPath={isMuted ? PATHS.micOff : PATHS.mic}
               label={isMuted ? "Unmute" : "Mute"}
@@ -708,14 +733,14 @@ export default function CallPanel({
               large={false}
             />
 
-            {/* End call - distinct red button */}
+            {/* End call */}
             <button
               onClick={handleLeave}
               title="Leave call"
               style={{
                 background: "#ea4335",
                 border: "none",
-                borderRadius: 24, 
+                borderRadius: 24,
                 width: 64, height: 40,
                 display: "flex", alignItems: "center", justifyContent: "center",
                 cursor: "pointer", color: "#fff",
@@ -729,7 +754,7 @@ export default function CallPanel({
             </button>
           </div>
 
-          {/* Right section / Participants */}
+          {/* Right: participant count + settings */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, justifyContent: "flex-end" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <Icon path={PATHS.users} size={16} />

@@ -81,7 +81,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
             toSocketId: targetSocketId,
             offer,
             channelId,
-            isRenegotiation: true, // ✅ IMPORTANT
+            isRenegotiation: true,
           });
         }
       } catch (err) {
@@ -89,11 +89,18 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       }
     };
 
-    // Establish transceivers for both audio and video to reserve SDP placeholders
+    // Add existing audio/video tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
         pc.addTrack(track, localStreamRef.current);
       });
+    }
+
+    // ✅ FIX: Always pre-reserve a video transceiver slot so replaceTrack works
+    // without triggering renegotiation when the user later turns on their camera.
+    const hasVideoTrack = localStreamRef.current?.getVideoTracks().length > 0;
+    if (!hasVideoTrack) {
+      pc.addTransceiver("video", { direction: "sendrecv" });
     }
 
     // Handle incoming remote tracks
@@ -201,23 +208,31 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         const newVideoTrack = stream.getVideoTracks()[0];
 
+        // Add to local stream ref so future peer connections include it
         localStreamRef.current.addTrack(newVideoTrack);
 
+        // ✅ FIX: Use replaceTrack via transceiver (no renegotiation needed).
+        // The video transceiver slot was pre-reserved in createPeerConnection,
+        // so we can swap in the real track without triggering onnegotiationneeded.
         Object.values(peerConnections.current).forEach((pc) => {
-          const sender = pc.getSenders().find(s => s.track?.kind === "video");
-
-          if (sender) {
-            sender.replaceTrack(newVideoTrack); // ✅ FIX
-          } else {
-            pc.addTrack(newVideoTrack, localStreamRef.current);
+          const transceiver = pc.getTransceivers().find(
+            (t) => t.receiver.track.kind === "video"
+          );
+          if (transceiver) {
+            transceiver.sender.replaceTrack(newVideoTrack).catch((err) => {
+              console.error("[WebRTC] Error replacing track for video on:", err);
+            });
           }
         });
 
         setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
         setIsVideoOff(false);
 
+        // Notify other participants
+        if (socket) socket.emit("call:video-toggle", { channelId, userId, videoOff: false });
       } catch (err) {
         console.error("Camera error:", err);
+        useStore.getState().showToast("Camera access denied or unavailable.");
       }
     } else {
       const videoTrack = localStreamRef.current?.getVideoTracks()[0];
@@ -225,9 +240,18 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       if (videoTrack) {
         videoTrack.stop();
 
+        // ✅ FIX: Nullify the sender track via transceiver rather than removing it.
+        // This keeps the SDP slot alive so video can be re-enabled later without
+        // a full renegotiation round-trip.
         Object.values(peerConnections.current).forEach((pc) => {
-          const sender = pc.getSenders().find(s => s.track?.kind === "video");
-          if (sender) sender.replaceTrack(null); // ✅ FIX
+          const transceiver = pc.getTransceivers().find(
+            (t) => t.receiver.track.kind === "video"
+          );
+          if (transceiver) {
+            transceiver.sender.replaceTrack(null).catch((err) => {
+              console.error("[WebRTC] Error nullifying video track:", err);
+            });
+          }
         });
 
         localStreamRef.current.removeTrack(videoTrack);
@@ -235,8 +259,11 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       }
 
       setIsVideoOff(true);
+
+      // Notify other participants
+      if (socket) socket.emit("call:video-toggle", { channelId, userId, videoOff: true });
     }
-  }, [isVideoOff]);
+  }, [isVideoOff, socket, channelId, userId]);
 
   // ── Toggle screen share ─────────────────────────────────────────────────────
   const toggleScreenShare = useCallback(async () => {
@@ -250,9 +277,11 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       // Restore camera video track in all peer connections
       const cameraTrack = localStreamRef.current?.getVideoTracks()[0] || null;
       Object.values(peerConnections.current).forEach((pc) => {
-        const transceiver = pc.getTransceivers().find((t) => t.receiver?.track?.kind === "video");
+        const transceiver = pc.getTransceivers().find(
+          (t) => t.receiver?.track?.kind === "video"
+        );
         if (transceiver && transceiver.sender) {
-          transceiver.sender.replaceTrack(cameraTrack).catch(err => {
+          transceiver.sender.replaceTrack(cameraTrack).catch((err) => {
             console.error("[WebRTC] Error restoring camera track:", err);
           });
         }
@@ -284,19 +313,20 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       }
 
       try {
-        // Some mobile browsers might have the API but fail on call.
         const screenStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
-          audio: false
+          audio: false,
         });
         screenStreamRef.current = screenStream;
         const screenTrack = screenStream.getVideoTracks()[0];
 
         // Replace video track in all peer connections
         Object.values(peerConnections.current).forEach((pc) => {
-          const transceiver = pc.getTransceivers().find((t) => t.receiver?.track?.kind === "video");
+          const transceiver = pc.getTransceivers().find(
+            (t) => t.receiver?.track?.kind === "video"
+          );
           if (transceiver && transceiver.sender) {
-            transceiver.sender.replaceTrack(screenTrack).catch(err => {
+            transceiver.sender.replaceTrack(screenTrack).catch((err) => {
               console.error("[WebRTC] Error replacing track for screen share:", err);
             });
           }
@@ -316,7 +346,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         if (socket) socket.emit("call:screen-share", { channelId, userId, sharing: true });
       } catch (err) {
         console.error("[WebRTC] Screen share error:", err);
-        if (err.name === 'NotAllowedError') {
+        if (err.name === "NotAllowedError") {
           useStore.getState().showToast("Screen share permission denied.");
         } else if (isMobile) {
           useStore.getState().showToast("Screen sharing is restricted by your mobile browser.");
@@ -333,7 +363,9 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       const next = !d;
       Object.values(remoteStreams).forEach((stream) => {
         if (stream) {
-          stream.getAudioTracks().forEach((t) => { t.enabled = !next; });
+          stream.getAudioTracks().forEach((t) => {
+            t.enabled = !next;
+          });
         }
       });
       return next;
@@ -363,17 +395,19 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         // Add participant
         setParticipants((prev) => {
           if (prev.find((p) => p.userId === member.userId)) return prev;
-          return [...prev, {
-            userId: member.userId,
-            userName: member.userName,
-            muted: member.muted,
-            videoOff: member.videoOff,
-            hand: false,
-            userObject: member.userObject
-          }];
+          return [
+            ...prev,
+            {
+              userId: member.userId,
+              userName: member.userName,
+              muted: member.muted,
+              videoOff: member.videoOff,
+              hand: false,
+              userObject: member.userObject,
+            },
+          ];
         });
 
-        // ✅ CREATE PEER CONNECTION (this was missing properly)
         const pc = createPeerConnection(member.userId, member.socketId);
 
         try {
@@ -394,13 +428,30 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     };
 
     // New user joined → wait for their offer
-    const onUserJoined = async ({ socketId: remoteSocketId, userId: remoteId, userName: remoteName, userObject, videoOff, muted }) => {
+    const onUserJoined = async ({
+      socketId: remoteSocketId,
+      userId: remoteId,
+      userName: remoteName,
+      userObject,
+      videoOff,
+      muted,
+    }) => {
       console.log("[WebRTC] User joined:", remoteId, remoteName, "socketId:", remoteSocketId);
       if (remoteId === userId) return; // Skip self
 
       setParticipants((prev) => {
         if (prev.find((p) => p.userId === remoteId)) return prev;
-        return [...prev, { userId: remoteId, userName: remoteName, muted: muted || false, videoOff: videoOff || false, hand: false, userObject }];
+        return [
+          ...prev,
+          {
+            userId: remoteId,
+            userName: remoteName,
+            muted: muted || false,
+            videoOff: videoOff || false,
+            hand: false,
+            userObject,
+          },
+        ];
       });
 
       // Do NOT send an offer to avoid glare. Create the connection and wait for their offer.
@@ -414,7 +465,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       const pc = createPeerConnection(remoteId, fromSocketId);
 
       try {
-        // 🔥 IMPORTANT FIX
+        // ✅ Rollback only if we're in the middle of our own offer exchange
         if (pc.signalingState !== "stable") {
           console.log("[WebRTC] Rolling back before applying new offer");
           await pc.setLocalDescription({ type: "rollback" });
@@ -431,6 +482,17 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
           channelId,
         });
 
+        // Flush any queued ICE candidates
+        if (iceCandidateQueue.current[remoteId]) {
+          for (const cand of iceCandidateQueue.current[remoteId]) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (e) {
+              console.error("[WebRTC] Queued ICE error after offer:", e);
+            }
+          }
+          iceCandidateQueue.current[remoteId] = [];
+        }
       } catch (err) {
         console.error("[WebRTC] Offer handling error:", err);
       }
@@ -445,9 +507,10 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       // Update participant with user object if available
       if (userObject) {
         setParticipants((prev) =>
-          prev.map((p) => p.userId === remoteId ? { ...p, userObject } : p)
+          prev.map((p) => (p.userId === remoteId ? { ...p, userObject } : p))
         );
       }
+
       if (pc) {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
@@ -456,8 +519,11 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
           // Flush ICE queue
           if (iceCandidateQueue.current[remoteId]) {
             for (const cand of iceCandidateQueue.current[remoteId]) {
-              try { await pc.addIceCandidate(new RTCIceCandidate(cand)); }
-              catch (e) { console.error("[WebRTC] Queued ICE error:", e); }
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(cand));
+              } catch (e) {
+                console.error("[WebRTC] Queued ICE error:", e);
+              }
             }
             iceCandidateQueue.current[remoteId] = [];
           }
@@ -470,15 +536,16 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     };
 
     // Receive ICE candidate
-    const onIceCandidate = async ({ fromSocketId, fromUserId, fromUserName, candidate, userObject }) => {
+    const onIceCandidate = async ({ fromSocketId, fromUserId, candidate }) => {
       const remoteId = fromUserId || fromSocketId;
       const pc = peerConnections.current[remoteId];
       if (pc) {
         if (pc.remoteDescription && pc.remoteDescription.type) {
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
+          } catch (e) {
+            console.error("[WebRTC] ICE candidate error for", remoteId, ":", e);
           }
-          catch (e) { console.error("[WebRTC] ICE candidate error for", remoteId, ":", e); }
         } else {
           // Queue candidate until remote description is set
           if (!iceCandidateQueue.current[remoteId]) iceCandidateQueue.current[remoteId] = [];
@@ -498,15 +565,16 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     // Mute/video status update from others
     const onParticipantUpdate = ({ socketId, userId: remoteId, muted, videoOff, hand, screenSharing }) => {
       setParticipants((prev) =>
-        prev.map((p) => p.userId === remoteId
-          ? {
-            ...p,
-            ...(muted !== undefined && { muted }),
-            ...(videoOff !== undefined && { videoOff }),
-            ...(hand !== undefined && { hand }),
-            ...(screenSharing !== undefined && { screenSharing })
-          }
-          : p
+        prev.map((p) =>
+          p.userId === remoteId
+            ? {
+                ...p,
+                ...(muted !== undefined && { muted }),
+                ...(videoOff !== undefined && { videoOff }),
+                ...(hand !== undefined && { hand }),
+                ...(screenSharing !== undefined && { screenSharing }),
+              }
+            : p
         )
       );
     };
@@ -532,7 +600,9 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
 
   // ── Cleanup on unmount ──────────────────────────────────────────────────────
   useEffect(() => {
-    return () => { leaveCall(); };
+    return () => {
+      leaveCall();
+    };
   }, [leaveCall]);
 
   return {

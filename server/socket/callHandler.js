@@ -3,8 +3,24 @@
 // Signals are routed by socketId (not userId) to avoid lookup failures.
 
 module.exports = function callHandler(io, socket) {
-  const userId   = socket.user._id.toString();
+  const userId = socket.user._id.toString();
   const userName = socket.user.name || socket.user.username || 'Unknown';
+
+  // ── Helper: build userObject from socket ────────────────────────────────────
+  function getUserObject(s) {
+    if (!s?.user) return null;
+    return {
+      _id: s.user._id,
+      name: s.user.name,
+      username: s.user.username,
+      avatar: s.user.avatar,
+    };
+  }
+
+  // ── Helper: get current call room size ─────────────────────────────────────
+  function getCallSize(callRoom) {
+    return io.sockets.adapter.rooms.get(callRoom)?.size || 0;
+  }
 
   // ── Join call room ──────────────────────────────────────────────────────────
   socket.on('call:join', ({ channelId, videoOff, muted }) => {
@@ -22,7 +38,7 @@ module.exports = function callHandler(io, socket) {
     socket.join(callRoom);
 
     // Store call meta on the socket for cleanup on disconnect
-    socket.callMeta = { channelId, userId, userName, videoOff, muted };
+    socket.callMeta = { channelId, userId, userName, videoOff: !!videoOff, muted: !!muted };
 
     // Tell the NEW joiner who is already in the room
     // so they can initiate an offer to each existing member
@@ -31,16 +47,11 @@ module.exports = function callHandler(io, socket) {
         const s = io.sockets.sockets.get(sid);
         return {
           socketId: sid,
-          userId:   s?.callMeta?.userId   || null,
+          userId: s?.callMeta?.userId || null,
           userName: s?.callMeta?.userName || 'Unknown',
           videoOff: s?.callMeta?.videoOff ?? false,
           muted: s?.callMeta?.muted ?? false,
-          userObject: s?.user ? {
-            _id: s.user._id,
-            name: s.user.name,
-            username: s.user.username,
-            avatar: s.user.avatar,
-          } : null,
+          userObject: getUserObject(s),
         };
       }),
     });
@@ -50,19 +61,13 @@ module.exports = function callHandler(io, socket) {
       socketId: socket.id,
       userId,
       userName,
-      videoOff,
-      muted,
-      userObject: {
-        _id: socket.user._id,
-        name: socket.user.name,
-        username: socket.user.username,
-        avatar: socket.user.avatar,
-      },
+      videoOff: !!videoOff,
+      muted: !!muted,
+      userObject: getUserObject(socket),
     });
 
     // Broadcast to the entire CHANNEL that call participant count changed
-    // This notifies users not yet in the call that they can see "Join (X)"
-    const currentCallSize = io.sockets.adapter.rooms.get(callRoom)?.size || 0;
+    const currentCallSize = getCallSize(callRoom);
     io.to(channelRoom).emit('call:participants-count', { count: currentCallSize });
 
     console.log(`[Call] ${userName} joined call:${channelId} | room size: ${currentCallSize}`);
@@ -72,31 +77,27 @@ module.exports = function callHandler(io, socket) {
   socket.on('call:leave', ({ channelId }) => {
     const callRoom = `call:${channelId}`;
     const channelRoom = `channel:${channelId}`;
-    
+
     socket.leave(callRoom);
     socket.to(callRoom).emit('call:user-left', { socketId: socket.id, userId });
-    
+
     // Broadcast updated call participant count to entire channel
-    const currentCallSize = io.sockets.adapter.rooms.get(callRoom)?.size || 0;
+    const currentCallSize = getCallSize(callRoom);
     io.to(channelRoom).emit('call:participants-count', { count: currentCallSize });
-    
+
     socket.callMeta = null;
     console.log(`[Call] ${userName} left call:${channelId} | remaining: ${currentCallSize}`);
   });
 
   // ── WebRTC offer (new joiner → existing member, by socketId) ───────────────
-  socket.on('call:offer', ({ toSocketId, offer }) => {
+  socket.on('call:offer', ({ toSocketId, offer, isRenegotiation }) => {
     io.to(toSocketId).emit('call:offer', {
       fromSocketId: socket.id,
-      fromUserId:   userId,
+      fromUserId: userId,
       fromUserName: userName,
       offer,
-      userObject: {
-        _id: socket.user._id,
-        name: socket.user.name,
-        username: socket.user.username,
-        avatar: socket.user.avatar,
-      },
+      isRenegotiation: !!isRenegotiation,
+      userObject: getUserObject(socket),
     });
   });
 
@@ -107,12 +108,7 @@ module.exports = function callHandler(io, socket) {
       fromUserId: userId,
       fromUserName: userName,
       answer,
-      userObject: {
-        _id: socket.user._id,
-        name: socket.user.name,
-        username: socket.user.username,
-        avatar: socket.user.avatar,
-      },
+      userObject: getUserObject(socket),
     });
   });
 
@@ -123,30 +119,48 @@ module.exports = function callHandler(io, socket) {
       fromUserId: userId,
       fromUserName: userName,
       candidate,
-      userObject: {
-        _id: socket.user._id,
-        name: socket.user.name,
-        username: socket.user.username,
-        avatar: socket.user.avatar,
-      },
+      userObject: getUserObject(socket),
     });
   });
 
   // ── Participant state broadcasts ────────────────────────────────────────────
-  socket.on('call:mute-toggle',  ({ channelId, muted })    => {
-    if (socket.callMeta) socket.callMeta.muted = muted;
-    socket.to(`call:${channelId}`).emit('call:participant-update', { socketId: socket.id, userId, muted });
+  socket.on('call:mute-toggle', ({ channelId, muted }) => {
+    if (socket.callMeta) socket.callMeta.muted = !!muted;
+    socket.to(`call:${channelId}`).emit('call:participant-update', {
+      socketId: socket.id,
+      userId,
+      muted: !!muted,
+    });
   });
+
+  // ✅ Correctly persists videoOff state so late joiners see accurate status
   socket.on('call:video-toggle', ({ channelId, videoOff }) => {
-    if (socket.callMeta) socket.callMeta.videoOff = videoOff;
-    socket.to(`call:${channelId}`).emit('call:participant-update', { socketId: socket.id, userId, videoOff });
+    if (socket.callMeta) socket.callMeta.videoOff = !!videoOff;
+    socket.to(`call:${channelId}`).emit('call:participant-update', {
+      socketId: socket.id,
+      userId,
+      videoOff: !!videoOff,
+    });
   });
-  socket.on('call:screen-share', ({ channelId, sharing })  => socket.to(`call:${channelId}`).emit('call:participant-update', { socketId: socket.id, userId, screenSharing: sharing }));
-  socket.on('call:hand-raise',   ({ channelId, raised })   => socket.to(`call:${channelId}`).emit('call:participant-update', { socketId: socket.id, userId, hand: raised }));
+
+  socket.on('call:screen-share', ({ channelId, sharing }) => {
+    socket.to(`call:${channelId}`).emit('call:participant-update', {
+      socketId: socket.id,
+      userId,
+      screenSharing: !!sharing,
+    });
+  });
+
+  socket.on('call:hand-raise', ({ channelId, raised }) => {
+    socket.to(`call:${channelId}`).emit('call:participant-update', {
+      socketId: socket.id,
+      userId,
+      hand: !!raised,
+    });
+  });
 
   // ── In-call chat ────────────────────────────────────────────────────────────
   socket.on('call:chat-message', ({ channelId, id, userId: msgUserId, userName: msgUserName, text, time }) => {
-    // Broadcast the complete message with all fields to other participants
     socket.to(`call:${channelId}`).emit('call:chat-message', {
       id,
       userId: msgUserId,
@@ -162,13 +176,13 @@ module.exports = function callHandler(io, socket) {
       const { channelId } = socket.callMeta;
       const callRoom = `call:${channelId}`;
       const channelRoom = `channel:${channelId}`;
-      
+
       socket.to(callRoom).emit('call:user-left', { socketId: socket.id, userId });
-      
+
       // Broadcast updated call participant count to entire channel
-      const currentCallSize = io.sockets.adapter.rooms.get(callRoom)?.size || 0;
+      const currentCallSize = getCallSize(callRoom);
       io.to(channelRoom).emit('call:participants-count', { count: currentCallSize });
-      
+
       console.log(`[Call] ${userName} disconnected from call:${channelId} | remaining: ${currentCallSize}`);
     }
   });
