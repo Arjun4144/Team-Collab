@@ -3,44 +3,45 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg-void: #f8fafc;
-  --bg-base: #ffffff;
-  --bg-surface: #f1f5f9;
-  --bg-surface-rgb: 241, 245, 249;
-  --bg-elevated: #e2e8f0;
-  --bg-hover: #cbd5e1;
-  --bg-active: #94a3b8;
+  /* Minimalist Flat Dark Theme (Google Meet/Zoom Style) */
+  --bg-void: #202124;
+  --bg-base: #202124;
+  --bg-surface: #3c4043;
+  --bg-surface-rgb: 60, 64, 67;
+  --bg-elevated: #5f6368;
+  --bg-hover: #4a4d51;
+  --bg-active: #5f6368;
 
-  --border: #e2e8f0;
-  --border-strong: #cbd5e1;
-  --border-accent: #0ea5e9;
+  --border: #3c4043;
+  --border-strong: #5f6368;
+  --border-accent: #8ab4f8;
 
-  --text-primary: #0f172a;
-  --text-secondary: #334155;
-  --text-muted: #64748b;
-  --text-inverse: #ffffff;
+  --text-primary: #e8eaed;
+  --text-secondary: #bdc1c6;
+  --text-muted: #9aa0a6;
+  --text-inverse: #202124;
 
-  --accent: #0284c7;
-  --accent-dim: #0369a1;
-  --accent-glow: rgba(2,132,199,0.12);
+  --accent: #8ab4f8;
+  --accent-dim: #aecbfa;
+  --accent-glow: transparent;
 
-  --intent-discussion: #6366f1;
-  --intent-announcement: #f59e0b;
-  --intent-decision: #10b981;
-  --intent-action: #ea580c;
-  --intent-fyi: #7c3aed;
+  --intent-discussion: #8ab4f8;
+  --intent-announcement: #fbbc04;
+  --intent-decision: #34a853;
+  --intent-action: #ea4335;
+  --intent-fyi: #c58af9;
 
-  --priority-low: #64748b;
-  --priority-normal: #6366f1;
-  --priority-high: #f59e0b;
-  --priority-urgent: #ef4444;
+  --priority-low: #9aa0a6;
+  --priority-normal: #8ab4f8;
+  --priority-high: #fbbc04;
+  --priority-urgent: #ea4335;
 
-  --status-online: #10b981;
-  --status-away: #f59e0b;
-  --status-busy: #ef4444;
-  --status-offline: #94a3b8;
+  --status-online: #34a853;
+  --status-away: #fbbc04;
+  --status-busy: #ea4335;
+  --status-offline: #5f6368;
 
-  --font-display: 'Syne', sans-serif;
+  --font-display: 'DM Sans', sans-serif;
   --font-body: 'DM Sans', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
@@ -56,28 +57,7 @@
 }
 
 html.theme-dark {
-  --bg-void: #080a0f;
-  --bg-base: #0d1117;
-  --bg-surface: #111820;
-  --bg-surface-rgb: 17, 24, 32;
-  --bg-elevated: #161e28;
-  --bg-hover: #1c2535;
-  --bg-active: #1f2d40;
-
-  --border: #1e2d3d;
-  --border-strong: #2a3f55;
-  --border-accent: #0ea5e9;
-
-  --text-primary: #e8edf5;
-  --text-secondary: #7d99b8;
-  --text-muted: #4a607a;
-  --text-inverse: #080a0f;
-
-  --accent: #0ea5e9;
-  --accent-dim: #0c8fc8;
-  --accent-glow: rgba(14,165,233,0.12);
-
-  --status-offline: #4a607a;
+  /* The entire app now uses the dark minimalist theme natively */
 }
 
 

@@ -9,9 +9,8 @@ import './index.css';
 
 export default function App() {
   useEffect(() => {
-    const theme = localStorage.getItem('nexus_theme') || 'light';
-    if (theme === 'dark') document.documentElement.classList.add('theme-dark');
-    else document.documentElement.classList.remove('theme-dark');
+    // Force the dark minimalist theme across the entire application
+    document.documentElement.classList.add('theme-dark');
   }, []);
 
   return (
