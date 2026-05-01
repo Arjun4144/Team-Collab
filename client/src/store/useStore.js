@@ -139,17 +139,22 @@ const useStore = create((set, get) => ({
     set({ activeWorkspace: workspace });
     if (workspace) {
       localStorage.setItem('nexus_last_workspace', workspace._id);
-      await s.fetchChannelsForWorkspace(workspace._id);
+      
+      // Fetch channels and members concurrently to prevent waterfall loading delays
+      await Promise.all([
+        s.fetchChannelsForWorkspace(workspace._id),
+        s.fetchWorkspaceMembers(workspace._id)
+      ]);
+
       // Auto-select #general or last channel
       const wsChannels = get().channels[workspace._id] || [];
       const lastChId = localStorage.getItem('nexus_last_channel');
       let targetChannel = wsChannels.find(c => c._id === lastChId);
       if (!targetChannel) targetChannel = wsChannels.find(c => c.name === 'general');
       if (!targetChannel && wsChannels.length > 0) targetChannel = wsChannels[0];
+      
       if (targetChannel) s.selectChannel(targetChannel);
       else set({ activeChannel: null });
-      // Fetch workspace members for isolation
-      await s.fetchWorkspaceMembers(workspace._id);
     }
   },
 

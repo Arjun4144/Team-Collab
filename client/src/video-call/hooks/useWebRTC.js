@@ -8,9 +8,22 @@ import { getSocket } from '../../utils/socket';
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
-  // TODO: Add working TURN server credentials for cross-network/NAT relay.
-  // The old openrelay.metered.ca TURN server is defunct.
-  // Get free TURN credentials at https://www.metered.ca/stun-turn
+  // Open Relay TURN server
+  {
+    urls: 'turn:openrelay.metered.ca:80',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  },
+  {
+    urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+    username: 'openrelayproject',
+    credential: 'openrelayproject'
+  }
 ];
 
 // ── Debug logger ──────────────────────────────────────────────
@@ -30,6 +43,7 @@ function dumpPeerState(label, peerConnections) {
 
 export default function useWebRTC(channelId, inCall) {
   const [localStream, setLocalStream] = useState(null);
+  // remoteStreams: { [socketId]: { stream: MediaStream|null, userId, userName } }
   const [remoteStreams, setRemoteStreams] = useState({});
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isMicOn, setIsMicOn] = useState(false);
@@ -39,6 +53,7 @@ export default function useWebRTC(channelId, inCall) {
   const pendingCandidates = useRef({});
   const makingOffer = useRef({});
   const peerMetadata = useRef({}); // { [socketId]: { userId, userName } }
+  const managedStreams = useRef({}); // { [socketId]: MediaStream } — our own streams that survive replaceTrack
   const videoTrackRef = useRef(null);
   const audioTrackRef = useRef(null);
   const screenTrackRef = useRef(null);
@@ -89,8 +104,16 @@ export default function useWebRTC(channelId, inCall) {
     peerConnections.current[remoteSocketId] = pc;
     makingOffer.current[remoteSocketId] = false;
 
-    // Store peer metadata in a ref (not in remoteStreams — keep streams flat).
+    // Store peer metadata in a ref for quick lookup.
     peerMetadata.current[remoteSocketId] = { userId: remoteUserId, userName: remoteUserName };
+
+    // Immediately add this peer to remoteStreams (with null stream) so
+    // the participant count and VideoGrid show them right away, even
+    // before any media tracks arrive.
+    setRemoteStreams((prev) => ({
+      ...prev,
+      [remoteSocketId]: { stream: prev[remoteSocketId]?.stream || null, userId: remoteUserId, userName: remoteUserName },
+    }));
 
     D(`  [DEBUG] Initializing transceivers (1 audio, 1 video) for new PC`);
     const audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
@@ -150,21 +173,43 @@ export default function useWebRTC(channelId, inCall) {
     };
 
     // ── Remote tracks ──
+    // CRITICAL: When transceivers are created without tracks (cam/mic off),
+    // event.streams[0] is UNDEFINED (no MSID in the SDP). We must NOT
+    // rely on it. Instead, we manage our own MediaStream per peer and
+    // add event.track to it. When the sender later calls replaceTrack(),
+    // media flows through the SAME track object — the video element
+    // picks it up automatically without needing another ontrack event.
     pc.ontrack = (event) => {
-      const remoteStream = event.streams[0];
-      if (!remoteStream) return;
-      D(`  → [DEBUG] ontrack FIRED from ${remoteSocketId.slice(-6)} | track=${event.track.kind} id=${event.track.id.slice(-6)} stream=${remoteStream.id}`);
+      D(`  → ontrack from ${remoteSocketId.slice(-6)} | track=${event.track.kind} id=${event.track.id.slice(-6)} readyState=${event.track.readyState} streams=${event.streams?.length || 0}`);
 
-      console.log("[DEBUG TRACK]", {
-        tracks: remoteStream.getTracks().map(t => t.kind),
-        videoTracks: remoteStream.getVideoTracks().length,
-        audioTracks: remoteStream.getAudioTracks().length
+      // Get or create a managed MediaStream for this peer
+      if (!managedStreams.current[remoteSocketId]) {
+        managedStreams.current[remoteSocketId] = new MediaStream();
+      }
+      const peerStream = managedStreams.current[remoteSocketId];
+
+      // Remove any existing track of the same kind before adding the new one
+      peerStream.getTracks()
+        .filter(t => t.kind === event.track.kind)
+        .forEach(t => peerStream.removeTrack(t));
+      peerStream.addTrack(event.track);
+
+      D(`  → Managed stream now has: ${peerStream.getTracks().map(t => `${t.kind}(${t.readyState})`).join(', ')}`);
+
+      // Update state — the same peerStream reference is reused, but
+      // we create a new state object so React triggers a re-render.
+      setRemoteStreams((prev) => {
+        const existing = prev[remoteSocketId] || {};
+        return {
+          ...prev,
+          [remoteSocketId]: {
+            ...existing,
+            stream: peerStream,
+            userId: existing.userId || remoteUserId,
+            userName: existing.userName || remoteUserName,
+          },
+        };
       });
-
-      setRemoteStreams((prev) => ({
-        ...prev,
-        [remoteSocketId]: remoteStream,
-      }));
     };
 
     pc.oniceconnectionstatechange = () => {
@@ -210,6 +255,9 @@ export default function useWebRTC(channelId, inCall) {
 
   const syncTrackToAllPeers = useCallback((track) => {
     const pcs = Object.entries(peerConnections.current);
+    const socket = getSocket();
+
+    D(`syncTrackToAllPeers: ${track.kind} track to ${pcs.length} peers`);
 
     pcs.forEach(([socketId, pc]) => {
       let sender = null;
@@ -222,7 +270,77 @@ export default function useWebRTC(channelId, inCall) {
         return;
       }
 
-      sender.replaceTrack(track).catch(err =>
+      const prevTrackId = sender.track?.id || 'null';
+
+      sender.replaceTrack(track).then(async () => {
+        D(`replaceTrack OK: ${track.kind} on ${socketId.slice(-6)} | prev=${prevTrackId} → new=${track.id.slice(-6)}`);
+
+        // Ensure the transceiver direction is sendrecv
+        const transceiver = pc.getTransceivers().find(t => t.sender === sender);
+        if (transceiver && transceiver.direction !== 'sendrecv') {
+          D(`  Fixing direction: ${transceiver.direction} → sendrecv`);
+          transceiver.direction = 'sendrecv';
+        }
+
+        // ALWAYS force renegotiation after replaceTrack.
+        // Screen share works because some browsers auto-renegotiate for
+        // getDisplayMedia tracks; camera tracks don't get that treatment.
+        // Explicit renegotiation guarantees the remote peer activates
+        // its receiver pipeline for the new track.
+        if (!socket) return;
+
+        // ── Glare prevention ──
+        // Only ONE peer should send the renegotiation offer.
+        // The peer with the higher socket.id is the designated offerer.
+        // This prevents simultaneous offers (glare) that cause cross-browser failures.
+        const shouldOffer = socket.id > socketId;
+        if (!shouldOffer) {
+          D(`  Skipping renegotiation for ${socketId.slice(-6)} (not the offerer, my=${socket.id.slice(-6)})`);
+          return;
+        }
+
+        // Wait for stable state if currently negotiating
+        const waitForStable = () => new Promise((resolve) => {
+          if (pc.signalingState === 'stable') return resolve();
+          D(`  Waiting for stable state (current: ${pc.signalingState})`);
+          const handler = () => {
+            if (pc.signalingState === 'stable') {
+              pc.removeEventListener('signalingstatechange', handler);
+              resolve();
+            }
+          };
+          pc.addEventListener('signalingstatechange', handler);
+          // Safety timeout — don't wait forever
+          setTimeout(() => {
+            pc.removeEventListener('signalingstatechange', handler);
+            resolve();
+          }, 3000);
+        });
+
+        await waitForStable();
+
+        if (pc.signalingState !== 'stable') {
+          WARN(`  Skipping renegotiation for ${socketId.slice(-6)}: stuck in ${pc.signalingState}`);
+          return;
+        }
+
+        D(`  → Renegotiating with ${socketId.slice(-6)} after replaceTrack`);
+        try {
+          makingOffer.current[socketId] = true;
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          D(`  → Offer sent to ${socketId.slice(-6)}`);
+          socket.emit('webrtc:offer', {
+            channelId: channelIdRef.current,
+            targetSocketId: socketId,
+            offer: pc.localDescription,
+          });
+        } catch (err) {
+          ERR('Renegotiation after replaceTrack failed:', err);
+        } finally {
+          makingOffer.current[socketId] = false;
+        }
+      }).catch(err =>
         console.error('[WebRTC] replaceTrack error:', err)
       );
     });
@@ -472,11 +590,14 @@ export default function useWebRTC(channelId, inCall) {
       delete pendingCandidates.current[socketId];
       delete makingOffer.current[socketId];
       delete peerMetadata.current[socketId];
+      delete managedStreams.current[socketId];
       setRemoteStreams((prev) => {
         const next = { ...prev };
         delete next[socketId];
         return next;
       });
+      // Force a re-render by updating version
+      D(`  Remaining remote peers: ${Object.keys(peerConnections.current).length}`);
       D(`  PCs remaining: ${Object.keys(peerConnections.current).length}`);
     };
 
@@ -523,6 +644,7 @@ export default function useWebRTC(channelId, inCall) {
     pendingCandidates.current = {};
     makingOffer.current = {};
     peerMetadata.current = {};
+    managedStreams.current = {};
     if (videoTrackRef.current) { videoTrackRef.current.stop(); videoTrackRef.current = null; }
     if (audioTrackRef.current) { audioTrackRef.current.stop(); audioTrackRef.current = null; }
     if (screenTrackRef.current) { screenTrackRef.current.stop(); screenTrackRef.current = null; }

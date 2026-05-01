@@ -27,7 +27,6 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
   const {
     localStream,
     remoteStreams,
-    peerMetadata,
     isCameraOn,
     isMicOn,
     isScreenSharing,
@@ -117,7 +116,6 @@ export default function VideoCallContainer({ channelId, onClose, mode, callSocke
           <VideoGrid
             localStream={localStream}
             remoteStreams={remoteStreams}
-            peerMetadata={peerMetadata}
             userName={user?.name || 'You'}
             isCameraOn={isCameraOn}
             isMicOn={isMicOn}

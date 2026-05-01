@@ -6,11 +6,31 @@ function VideoTile({ stream, label, isLocal, isCameraOn, isMicOn, isScreenSharin
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
-    el.srcObject = stream ? stream : null;
+    
+    // Set srcObject
+    el.srcObject = stream || null;
+
+    if (!stream) return;
+
+    // When tracks are added/removed inside the same MediaStream
+    // (e.g. after renegotiation replaces the video track), we need
+    // to re-poke srcObject so the browser picks up the change.
+    const onTrackChange = () => {
+      el.srcObject = stream;
+    };
+    stream.addEventListener('addtrack', onTrackChange);
+    stream.addEventListener('removetrack', onTrackChange);
+
+    return () => {
+      stream.removeEventListener('addtrack', onTrackChange);
+      stream.removeEventListener('removetrack', onTrackChange);
+    };
   }, [stream]);
 
-  // For remote peers: also detect video from live tracks (fallback when media state hasn't arrived)
-  const hasLiveVideoTrack = !isLocal && stream && stream.getVideoTracks().some(t => t.readyState === 'live' && t.enabled);
+  // For remote peers: detect if actual video data is being received.
+  // track.muted === false means the sender has a real track and data is flowing.
+  // This handles the gap before peerMediaStates arrive.
+  const hasLiveVideoTrack = !isLocal && stream && stream.getVideoTracks().some(t => t.readyState === 'live' && t.enabled && !t.muted);
   const displayVideo = isCameraOn || isScreenSharing || hasLiveVideoTrack;
 
   return (
@@ -49,7 +69,7 @@ function VideoTile({ stream, label, isLocal, isCameraOn, isMicOn, isScreenSharin
 }
 
 export default function VideoGrid({ 
-  localStream, remoteStreams, peerMetadata, userName, 
+  localStream, remoteStreams, userName, 
   isCameraOn, isMicOn, isScreenSharing, 
   peerMediaStates, viewMode 
 }) {
@@ -63,13 +83,13 @@ export default function VideoGrid({
       isMicOn,
       isScreenSharing
     },
-    ...Object.entries(remoteStreams).map(([socketId, stream]) => {
-      const meta = peerMetadata?.current?.[socketId] || {};
-      const peerState = peerMediaStates?.[meta.userId] || {};
+    // remoteStreams shape: { [socketId]: { stream, userId, userName } }
+    ...Object.entries(remoteStreams).map(([socketId, peerData]) => {
+      const peerState = peerMediaStates?.[peerData.userId] || {};
       return {
         id: socketId,
-        stream,
-        label: meta.userName,
+        stream: peerData.stream,
+        label: peerData.userName,
         isLocal: false,
         isCameraOn: !!peerState.isCameraOn,
         isMicOn: !!peerState.isMicOn,
