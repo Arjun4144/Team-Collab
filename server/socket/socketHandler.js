@@ -1,8 +1,10 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Channel = require('../models/Channel');
+const Message = require('../models/Message');
 const Workspace = require('../models/Workspace');
 const { JWT_SECRET } = require('../middleware/auth');
+const callHandler = require('./callHandler'); // ← NEW
 
 const onlineUsers = new Map(); // userId -> Set<socketId>
 
@@ -54,6 +56,10 @@ function initSocket(io) {
         const channel = await Channel.findById(channelId);
         if (channel && channel.members.some(m => m.toString() === userId)) {
           socket.join(`channel:${channelId}`);
+          
+          // Provide the current call count to the newly joined user
+          const currentCallSize = io.sockets.adapter.rooms.get(`call:${channelId}`)?.size || 0;
+          socket.emit('call:participants-count', { count: currentCallSize });
         }
       } catch {}
     });
@@ -104,7 +110,6 @@ function initSocket(io) {
       const { messageId, channelId, updates } = data;
       if (!messageId || !channelId || !updates) return;
       try {
-        const Message = require('../models/Message');
 
         const msg = await Message.findById(messageId);
         if (!msg) return;
@@ -128,6 +133,9 @@ function initSocket(io) {
         io.to(`channel:${channelId}`).emit('messageUpdated', { ...data, updates: safeUpdates });
       } catch (err) {}
     });
+
+    // ── Call signaling ── ← NEW
+    callHandler(io, socket);
 
     socket.on('disconnect', async () => {
       // Remove this socket from the user's set

@@ -7,8 +7,6 @@ const User = require('../models/User');
 const Notification = require('../models/Notification');
 const { auth } = require('../middleware/auth');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { generateSummary } = require('../utils/gemini');
 
 const storage = multer.memoryStorage();
@@ -263,30 +261,7 @@ router.post('/channel/:channelId/upload', auth, upload.single('file'), async (re
   }
 });
 
-router.get('/files/:filename', auth, async (req, res) => {
-  try {
-    const filename = req.params.filename;
-    // Find message containing this file
-    const message = await Message.findOne({
-      $or: [
-        { 'attachments.url': filename },
-        { 'attachments.url': `/uploads/${filename}` }
-      ]
-    });
-    if (!message) return res.status(404).json({ error: 'File not found' });
-    
-    // Verify channel membership
-    const ch = await Channel.findById(message.channel);
-    if (!ch) return res.status(404).json({ error: 'Channel not found' });
-    const isMember = ch.members.some(m => m.toString() === req.user._id.toString());
-    if (!isMember) return res.status(403).json({ error: 'Unauthorized to access this file' });
-    
-    const filePath = path.join(__dirname, '../uploads', filename);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
-    
-    res.sendFile(filePath);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+
 
 router.delete('/:id/everyone', auth, async (req, res) => {
   try {

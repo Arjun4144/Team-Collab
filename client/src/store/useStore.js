@@ -6,6 +6,8 @@ const useStore = create((set, get) => ({
   // Auth
   user: null,
   token: localStorage.getItem('nexus_token'),
+  socket: null,
+  setSocket: (socket) => set({ socket }),
   setUser: (updatedUser) => {
     set(s => {
       const updateList = (list) => list.map(u => u._id === updatedUser._id ? { ...u, ...updatedUser } : u);

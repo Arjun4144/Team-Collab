@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import useStore from '../store/useStore';
+import api from '../utils/api';
 
 export const useSocket = (socket) => {
   useEffect(() => {
@@ -11,9 +12,7 @@ export const useSocket = (socket) => {
       const activeChId = state.activeChannel ? String(state.activeChannel._id) : null;
       
       if (activeChId === channelId) {
-        import('../utils/api').then(({ default: api }) => {
-          api.post(`/messages/channel/${channelId}/read`).catch(() => {});
-        });
+        api.post(`/messages/channel/${channelId}/read`).catch(() => {});
       } else {
         // Increment unread count for non-active channels
         state.incrementChannelUnread(channelId);
@@ -38,9 +37,7 @@ export const useSocket = (socket) => {
       if (reply) {
         const activeChId = state.activeChannel ? String(state.activeChannel._id) : null;
         if (activeChId === channelId) {
-          import('../utils/api').then(({ default: api }) => {
-            api.post(`/messages/channel/${channelId}/read`).catch(() => {});
-          });
+          api.post(`/messages/channel/${channelId}/read`).catch(() => {});
         } else {
           state.incrementChannelUnread(channelId);
         }

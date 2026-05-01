@@ -17,7 +17,7 @@ const decisionRoutes = require('./routes/decisions');
 const userRoutes = require('./routes/users');
 const uploadRoutes = require('./routes/upload');
 const { initSocket, onlineUsers } = require('./socket/socketHandler');
-const { initVideoCallSocket } = require('./socket/videoCallHandler');
+
 
 const app = express();
 const server = http.createServer(app);
@@ -57,7 +57,7 @@ app.use('/api/upload', uploadRoutes);
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 
 initSocket(io);
-initVideoCallSocket(io);
+
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus';
 mongoose.connect(MONGO_URI)

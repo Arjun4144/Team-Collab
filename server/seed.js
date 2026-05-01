@@ -1,11 +1,11 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
-const User      = require('./models/User');
+const User = require('./models/User');
 const Workspace = require('./models/Workspace');
-const Channel   = require('./models/Channel');
-const Message   = require('./models/Message');
-const Task      = require('./models/Task');
-const Decision  = require('./models/Decision');
+const Channel = require('./models/Channel');
+const Message = require('./models/Message');
+const Task = require('./models/Task');
+const Decision = require('./models/Decision');
 
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/nexus';
 
@@ -22,17 +22,17 @@ async function seed() {
 
   // ── Users ──────────────────────────────────────────────────
   const [alice, bob, carol, dave] = await User.insertMany([
-    { name: 'Alice Chen',    email: 'alice@nexus.dev', password: 'password123', status: 'online'  },
-    { name: 'Bob Martinez',  email: 'bob@nexus.dev',   password: 'password123', status: 'online'  },
-    { name: 'Carol Smith',   email: 'carol@nexus.dev', password: 'password123', status: 'away'    },
-    { name: 'Dave Wilson',   email: 'dave@nexus.dev',  password: 'password123', status: 'offline' },
+    { name: 'Alice Chen', email: 'alice@nexus.dev', password: 'password123', status: 'online' },
+    { name: 'Bob Martinez', email: 'bob@nexus.dev', password: 'password123', status: 'online' },
+    { name: 'Carol Smith', email: 'carol@nexus.dev', password: 'password123', status: 'away' },
+    { name: 'Dave Wilson', email: 'dave@nexus.dev', password: 'password123', status: 'offline' },
   ]);
   // Hash passwords properly via save()
   for (const raw of [
     { _id: alice._id, password: 'password123' },
-    { _id: bob._id,   password: 'password123' },
+    { _id: bob._id, password: 'password123' },
     { _id: carol._id, password: 'password123' },
-    { _id: dave._id,  password: 'password123' },
+    { _id: dave._id, password: 'password123' },
   ]) {
     const u = await User.findById(raw._id);
     u.password = raw.password;
@@ -66,19 +66,19 @@ async function seed() {
 
   // ── Channels ───────────────────────────────────────────────
   const [companyGeneral, companyAnnouncements] = await Channel.insertMany([
-    { name: 'general',       description: 'Company-wide discussions', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [alice._id], workspaceId: wsCompany._id },
-    { name: 'announcements', description: 'Important announcements',  type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [alice._id], workspaceId: wsCompany._id },
+    { name: 'general', description: 'Company-wide discussions', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [alice._id], workspaceId: wsCompany._id },
+    { name: 'announcements', description: 'Important announcements', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [alice._id], workspaceId: wsCompany._id },
   ]);
 
   const [engGeneral, engBackend, engDesign] = await Channel.insertMany([
-    { name: 'general',  description: 'Engineering team discussions', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id], admins: [alice._id], workspaceId: wsEngineering._id },
-    { name: 'backend',  description: 'Backend & API discussions',    type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id], admins: [alice._id], workspaceId: wsEngineering._id },
-    { name: 'design',   description: 'Design reviews & critiques',   type: 'private', createdBy: carol._id, members: [alice._id, carol._id],          admins: [carol._id], workspaceId: wsEngineering._id },
+    { name: 'general', description: 'Engineering team discussions', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id], admins: [alice._id], workspaceId: wsEngineering._id },
+    { name: 'backend', description: 'Backend & API discussions', type: 'private', createdBy: alice._id, members: [alice._id, bob._id, carol._id], admins: [alice._id], workspaceId: wsEngineering._id },
+    { name: 'design', description: 'Design reviews & critiques', type: 'private', createdBy: carol._id, members: [alice._id, carol._id], admins: [carol._id], workspaceId: wsEngineering._id },
   ]);
 
   const [prodGeneral, prodRoadmap] = await Channel.insertMany([
-    { name: 'general',  description: 'Product discussions',         type: 'private', createdBy: carol._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [carol._id], workspaceId: wsProduct._id },
-    { name: 'roadmap',  description: 'Product decisions & roadmap', type: 'private', createdBy: carol._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [carol._id], workspaceId: wsProduct._id },
+    { name: 'general', description: 'Product discussions', type: 'private', createdBy: carol._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [carol._id], workspaceId: wsProduct._id },
+    { name: 'roadmap', description: 'Product decisions & roadmap', type: 'private', createdBy: carol._id, members: [alice._id, bob._id, carol._id, dave._id], admins: [carol._id], workspaceId: wsProduct._id },
   ]);
   console.log('Created 7 channels across 3 workspaces');
 

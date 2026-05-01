@@ -17,7 +17,8 @@ export default function WorkspacePage() {
   const { 
     token, user, setUser, workspaces, fetchWorkspaces, fetchTasks, fetchDecisions, fetchWorkspaceMembers, fetchUsers, 
     rightPanel, activeThread, toast, activeWorkspace, activeChannel, setToast, 
-    selectWorkspace, selectChannel, profileUser, setProfileUser, confirmModal
+    selectWorkspace, selectChannel, profileUser, setProfileUser, confirmModal,
+    setSocket: setSocketStore
   } = useStore();
   const [socket, setSocket] = useState(null);
   const [initialized, setInitialized] = useState(false);
@@ -63,6 +64,7 @@ export default function WorkspacePage() {
     // Boot socket
     const s = initSocket(token);
     setSocket(s);
+    setSocketStore(s);
 
     // Load saved panel width
     const savedPanelW = localStorage.getItem('nexus_panel_width');
@@ -115,7 +117,7 @@ export default function WorkspacePage() {
       }
     });
 
-    return () => { s.disconnect(); setSocket(null); };
+    return () => { s.disconnect(); setSocket(null); setSocketStore(null); };
   }, [token, urlWorkspaceId]);
 
   // Sync URL when workspace/channel changes

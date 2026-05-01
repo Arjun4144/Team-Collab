@@ -1,7 +1,11 @@
 import axios from 'axios';
 
+const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:5000/api'
+  : 'https://team-collab-ntlm.onrender.com/api';
+
 const api = axios.create({
-  baseURL: 'https://team-collab-1-64qq.onrender.com/api',
+  baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' }
 });
 

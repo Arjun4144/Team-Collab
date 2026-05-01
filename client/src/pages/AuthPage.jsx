@@ -44,7 +44,7 @@ export default function AuthPage() {
     } catch (err) {
       setError(err.response?.data?.error || 'Something went wrong');
     } finally {
-      setLoading(true); // Keep loading true during redirect
+      setLoading(false);
       setTimeout(() => setLoading(false), 500);
     }
   };

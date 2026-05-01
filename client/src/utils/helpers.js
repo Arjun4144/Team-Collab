@@ -14,7 +14,11 @@ export const getInitials = (name = '') => {
   if (!name || typeof name !== 'string') return '?';
   const parts = name.trim().split(/\s+/);
   if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  if (parts.length === 1) {
+    const first = parts[0];
+    if (first.length === 1) return first.toUpperCase();
+    return (first[0] + first[first.length - 1]).toUpperCase();
+  }
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 };
 

@@ -6,7 +6,9 @@ export const getSocket = () => socket;
 
 // Always connect to the deployed backend.
 // Must match the Axios baseURL origin for consistency.
-const SOCKET_URL = 'https://team-collab-ntlm.onrender.com';
+const SOCKET_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:5000' 
+  : 'https://team-collab-ntlm.onrender.com';
 
 export const initSocket = (token) => {
   if (socket) socket.disconnect();
@@ -21,8 +23,10 @@ export const initSocket = (token) => {
 
   socket.on('connect', () => console.log('[socket] connected:', socket.id));
   socket.on('connect_error', (err) => console.error('[socket] connect error:', err.message));
-  // Debug: log ALL incoming events (remove in production)
-  socket.onAny((event, ...args) => console.log('[socket event]', event, args));
+  // Debug: log ALL incoming events (dev only)
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    socket.onAny((event, ...args) => console.log('[socket event]', event, args));
+  }
 
   return socket;
 };
