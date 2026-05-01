@@ -69,6 +69,29 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       peerSocketIds.current[remoteUserId] = remoteSocketId;
     }
 
+    pc.onnegotiationneeded = async () => {
+      try {
+        console.log("[WebRTC] Negotiation needed with", remoteUserId);
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        const targetSocketId = peerSocketIds.current[remoteUserId];
+
+        if (targetSocketId) {
+          socket.emit("call:offer", {
+            toSocketId: targetSocketId,
+            offer,
+            channelId,
+          });
+
+          console.log("[WebRTC] Sent renegotiation offer to", remoteUserId);
+        }
+      } catch (err) {
+        console.error("[WebRTC] Negotiation error:", err);
+      }
+    };
+
     // Establish transceivers for both audio and video to reserve SDP placeholders
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => {
@@ -177,57 +200,36 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
 
   // ── Toggle camera ───────────────────────────────────────────────────────────
   const toggleVideo = useCallback(async () => {
+    if (!localStreamRef.current) return;
+
     if (isVideoOff) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         const newVideoTrack = stream.getVideoTracks()[0];
 
         // Add to local stream
-        if (localStreamRef.current) {
-          localStreamRef.current.addTrack(newVideoTrack);
-        } else {
-          localStreamRef.current = new MediaStream([newVideoTrack]);
-        }
-
+        localStreamRef.current.addTrack(newVideoTrack);
         setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
 
-        // 🔥 Add track to ALL peer connections
-        Object.entries(peerConnections.current).forEach(([remoteUserId, pc]) => {
-          pc.addTrack(newVideoTrack, localStreamRef.current);
-        });
+        // 🔥 IMPORTANT: use replaceTrack instead of addTrack
+        Object.values(peerConnections.current).forEach((pc) => {
+          const sender = pc.getSenders().find(s => s.track?.kind === "video");
 
-        // 🔥 FORCE renegotiation manually (important)
-        Object.entries(peerConnections.current).forEach(async ([remoteUserId, pc]) => {
-          try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-
-            const targetSocketId = peerSocketIds.current[remoteUserId];
-            if (targetSocketId) {
-              socket.emit("call:offer", {
-                toSocketId: targetSocketId,
-                offer,
-                channelId,
-              });
-            }
-          } catch (err) {
-            console.error("[WebRTC] renegotiation error:", err);
+          if (sender) {
+            sender.replaceTrack(newVideoTrack);
+          } else {
+            pc.addTrack(newVideoTrack, localStreamRef.current);
           }
         });
-
-        newVideoTrack.onended = () => {
-          setIsVideoOff(true);
-        };
 
         setIsVideoOff(false);
 
       } catch (err) {
-        console.error("Camera access failed:", err);
+        console.error("Camera error:", err);
       }
-    } else {
-      // 🔴 TURN OFF VIDEO
 
-      const videoTrack = localStreamRef.current?.getVideoTracks()[0];
+    } else {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
 
       if (videoTrack) {
         videoTrack.stop();
@@ -235,18 +237,18 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
 
         setLocalStream(new MediaStream(localStreamRef.current.getTracks()));
 
-        // Remove sender track from peers
+        // 🔥 Remove video from peers properly
         Object.values(peerConnections.current).forEach((pc) => {
           const sender = pc.getSenders().find(s => s.track?.kind === "video");
           if (sender) {
-            pc.removeTrack(sender);
+            sender.replaceTrack(null); // THIS is important
           }
         });
       }
 
       setIsVideoOff(true);
     }
-  }, [isVideoOff, socket, channelId]);
+  }, [isVideoOff]);
 
   // ── Toggle screen share ─────────────────────────────────────────────────────
   const toggleScreenShare = useCallback(async () => {
@@ -366,33 +368,40 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     // Receive list of existing members already in the call
     const onExistingMembers = async ({ members }) => {
       console.log("[WebRTC] Existing members:", members);
-      for (const member of members) {
-        if (member.userId === userId) continue; // Skip self
 
-        // Add to participants list
+      for (const member of members) {
+        if (member.userId === userId) continue;
+
+        // Add participant
         setParticipants((prev) => {
           if (prev.find((p) => p.userId === member.userId)) return prev;
-          return [...prev, { userId: member.userId, userName: member.userName, muted: member.muted, videoOff: member.videoOff, hand: false, userObject: member.userObject }];
+          return [...prev, {
+            userId: member.userId,
+            userName: member.userName,
+            muted: member.muted,
+            videoOff: member.videoOff,
+            hand: false,
+            userObject: member.userObject
+          }];
         });
 
-        // Create peer connection and initiate offer (pass socketId for routing)
-        pc.onnegotiationneeded = async () => {
-          try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
+        // ✅ CREATE PEER CONNECTION (this was missing properly)
+        const pc = createPeerConnection(member.userId, member.socketId);
 
-            const targetSocketId = peerSocketIds.current[remoteUserId];
-            if (targetSocketId) {
-              socket.emit("call:offer", {
-                toSocketId: targetSocketId,
-                offer,
-                channelId,
-              });
-            }
-          } catch (err) {
-            console.error("[WebRTC] Negotiation error:", err);
-          }
-        };
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+
+          socket.emit("call:offer", {
+            toSocketId: member.socketId,
+            offer,
+            channelId,
+          });
+
+          console.log("[WebRTC] Sent offer to", member.userId);
+        } catch (err) {
+          console.error("[WebRTC] Error creating offer:", err);
+        }
       }
     };
 
