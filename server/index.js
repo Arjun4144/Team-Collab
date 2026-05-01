@@ -24,8 +24,7 @@ const server = http.createServer(app);
 
 // Support multiple frontend origins for dev + production
 const ALLOWED_ORIGINS = [
-  'http://localhost:3000',
-  'https://team-collab-mu.vercel.app',
+  'https://team-collab-ui.onrender.com',
   process.env.CLIENT_URL
 ].filter(Boolean);
 

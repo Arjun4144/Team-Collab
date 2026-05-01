@@ -6,9 +6,7 @@ export const getSocket = () => socket;
 
 // Always connect to the deployed backend.
 // Must match the Axios baseURL origin for consistency.
-const SOCKET_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? 'http://localhost:5000' 
-  : 'https://team-collab-ntlm.onrender.com';
+const SOCKET_URL = 'https://team-collab-back.onrender.com';
 
 export const initSocket = (token) => {
   if (socket) socket.disconnect();
