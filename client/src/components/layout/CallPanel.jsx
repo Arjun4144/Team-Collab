@@ -322,8 +322,8 @@ function ChatPanel({ onClose, socket, channelId, currentUser, participants }) {
     const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const msg = {
       id: Date.now(),
-      userId: currentUser._id,
-      userName: currentUser.username,
+      userId: currentUser?._id,
+      userName: currentUser?.name || currentUser?.username || "You",
       text: input.trim(),
       time: timestamp,
     };
@@ -456,7 +456,12 @@ export default function CallPanel({
     callDuration, connectionStatus,
     joinCall, leaveCall,
     toggleMute, toggleVideo, toggleScreenShare, toggleDeafen, toggleHand,
-  } = useWebRTC({ socket, channelId, userId: currentUser?._id, userName: currentUser?.username });
+  } = useWebRTC({
+    socket,
+    channelId,
+    userId: currentUser?._id,
+    userName: currentUser?.name || currentUser?.username,
+  });
 
   const joinedChannelRef = useRef(null);
 
@@ -487,11 +492,17 @@ export default function CallPanel({
   }, [leaveCall, onLeave]);
 
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  const localPeerId = socket?.id || currentUser?._id;
+  const getPeerKey = (participant) => participant.peerId || participant.userId;
+  const isLocalParticipant = (participant) => getPeerKey(participant) === localPeerId;
+  const currentUserName = currentUser?.name || currentUser?.username || "You";
 
   // Build all tiles: local + remote participants
   const localParticipant = {
+    peerId: localPeerId,
+    socketId: socket?.id,
     userId: currentUser?._id,
-    userName: currentUser?.username,
+    userName: currentUserName,
     userObject: currentUser,
     muted: isMuted,
     videoOff: isVideoOff,
@@ -506,9 +517,9 @@ export default function CallPanel({
   const cols = count <= 1 ? 1 : count <= 4 ? 2 : 3;
 
   // Spotlight: prioritize screen sharer, then first remote with a stream, fallback to local
-  const screenSharer = participants.find(p => p.screenSharing && remoteStreams[p.userId]);
-  const spotlightP = screenSharer || participants.find((p) => remoteStreams[p.userId]) || localParticipant;
-  const stripP = allParticipants.filter((p) => p.userId !== spotlightP.userId);
+  const screenSharer = participants.find(p => p.screenSharing && remoteStreams[getPeerKey(p)]);
+  const spotlightP = screenSharer || participants.find((p) => remoteStreams[getPeerKey(p)]) || localParticipant;
+  const stripP = allParticipants.filter((p) => getPeerKey(p) !== getPeerKey(spotlightP));
 
   return (
     <>
@@ -600,8 +611,8 @@ export default function CallPanel({
                 <div style={{ flex: 1, minHeight: 0 }}>
                   <VideoTile
                     participant={spotlightP}
-                    stream={spotlightP.userId === currentUser?._id ? localStream : remoteStreams[spotlightP.userId]}
-                    isLocal={spotlightP.userId === currentUser?._id}
+                    stream={isLocalParticipant(spotlightP) ? localStream : remoteStreams[getPeerKey(spotlightP)]}
+                    isLocal={isLocalParticipant(spotlightP)}
                     large
                   />
                 </div>
@@ -613,10 +624,10 @@ export default function CallPanel({
                   }}>
                     {stripP.map((p) => (
                       <VideoTile
-                        key={p.userId}
+                        key={getPeerKey(p)}
                         participant={p}
-                        stream={p.userId === currentUser?._id ? localStream : remoteStreams[p.userId]}
-                        isLocal={p.userId === currentUser?._id}
+                        stream={isLocalParticipant(p) ? localStream : remoteStreams[getPeerKey(p)]}
+                        isLocal={isLocalParticipant(p)}
                       />
                     ))}
                   </div>
@@ -630,10 +641,10 @@ export default function CallPanel({
               }}>
                 {allParticipants.map((p) => (
                   <VideoTile
-                    key={p.userId}
+                    key={getPeerKey(p)}
                     participant={p}
-                    stream={p.userId === currentUser?._id ? localStream : remoteStreams[p.userId]}
-                    isLocal={p.userId === currentUser?._id}
+                    stream={isLocalParticipant(p) ? localStream : remoteStreams[getPeerKey(p)]}
+                    isLocal={isLocalParticipant(p)}
                     large={count === 1}
                   />
                 ))}

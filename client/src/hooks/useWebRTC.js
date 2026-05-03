@@ -23,9 +23,9 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
   const [callDuration, setCallDuration] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState("connecting"); // connecting | connected | disconnected
 
-  const peerConnections = useRef({}); // { userId: RTCPeerConnection }
-  const peerSocketIds = useRef({}); // { userId: socketId } - map for routing messages
-  const iceCandidateQueue = useRef({}); // { userId: [candidates] }
+  const peerConnections = useRef({}); // { peerId/socketId: RTCPeerConnection }
+  const peerSocketIds = useRef({}); // { peerId/socketId: socketId } - map for routing messages
+  const iceCandidateQueue = useRef({}); // { peerId/socketId: [candidates] }
   const localStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
   const timerRef = useRef(null);
@@ -58,36 +58,21 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
   }, []);
 
   // ── Create RTCPeerConnection for a remote user ──────────────────────────────
-  const createPeerConnection = useCallback((remoteUserId, remoteSocketId = null) => {
-    if (peerConnections.current[remoteUserId]) {
-      return peerConnections.current[remoteUserId];
+  const createPeerConnection = useCallback((remotePeerId, remoteSocketId = remotePeerId) => {
+    if (peerConnections.current[remotePeerId]) {
+      if (remoteSocketId) peerSocketIds.current[remotePeerId] = remoteSocketId;
+      return peerConnections.current[remotePeerId];
     }
 
     const pc = new RTCPeerConnection(ICE_SERVERS);
-    peerConnections.current[remoteUserId] = pc;
+    peerConnections.current[remotePeerId] = pc;
     if (remoteSocketId) {
-      peerSocketIds.current[remoteUserId] = remoteSocketId;
+      peerSocketIds.current[remotePeerId] = remoteSocketId;
     }
 
-    pc.onnegotiationneeded = async () => {
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-
-        const targetSocketId = peerSocketIds.current[remoteUserId];
-
-        if (targetSocketId) {
-          socket.emit("call:offer", {
-            toSocketId: targetSocketId,
-            offer,
-            channelId,
-            isRenegotiation: true,
-          });
-        }
-      } catch (err) {
-        console.error("[WebRTC] Negotiation error:", err);
-      }
-    };
+    // Initial offers are created explicitly by the joining client. Letting
+    // addTrack/addTransceiver auto-offer from both sides causes offer glare.
+    pc.onnegotiationneeded = null;
 
     // Add existing audio/video tracks
     if (localStreamRef.current) {
@@ -106,13 +91,13 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     // Handle incoming remote tracks
     pc.ontrack = (event) => {
       const [remoteStream] = event.streams;
-      setRemoteStreams((prev) => ({ ...prev, [remoteUserId]: remoteStream }));
+      setRemoteStreams((prev) => ({ ...prev, [remotePeerId]: remoteStream }));
     };
 
     // Send ICE candidates via socket
     pc.onicecandidate = (event) => {
       if (event.candidate && socket) {
-        const targetSocketId = peerSocketIds.current[remoteUserId];
+        const targetSocketId = peerSocketIds.current[remotePeerId];
         if (targetSocketId) {
           socket.emit("call:ice-candidate", {
             toSocketId: targetSocketId,
@@ -133,19 +118,19 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
   }, [socket, channelId]);
 
   // ── Remove a peer connection ────────────────────────────────────────────────
-  const removePeerConnection = useCallback((remoteUserId) => {
-    const pc = peerConnections.current[remoteUserId];
+  const removePeerConnection = useCallback((remotePeerId) => {
+    const pc = peerConnections.current[remotePeerId];
     if (pc) {
       pc.close();
-      delete peerConnections.current[remoteUserId];
-      delete peerSocketIds.current[remoteUserId];
+      delete peerConnections.current[remotePeerId];
+      delete peerSocketIds.current[remotePeerId];
     }
     setRemoteStreams((prev) => {
       const next = { ...prev };
-      delete next[remoteUserId];
+      delete next[remotePeerId];
       return next;
     });
-    setParticipants((prev) => prev.filter((p) => p.userId !== remoteUserId));
+    setParticipants((prev) => prev.filter((p) => (p.peerId || p.userId) !== remotePeerId));
   }, []);
 
   // ── Join a channel call ─────────────────────────────────────────────────────
@@ -390,15 +375,18 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       console.log("[WebRTC] Existing members:", members);
 
       for (const member of members) {
-        if (member.userId === userId) continue;
+        if (member.socketId === socket.id) continue;
+        const peerId = member.socketId;
 
         // Add participant
         setParticipants((prev) => {
-          if (prev.find((p) => p.userId === member.userId)) return prev;
+          if (prev.find((p) => (p.peerId || p.userId) === peerId)) return prev;
           return [
             ...prev,
             {
-              userId: member.userId,
+              peerId,
+              socketId: member.socketId,
+              userId: member.userId || peerId,
               userName: member.userName,
               muted: member.muted,
               videoOff: member.videoOff,
@@ -408,7 +396,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
           ];
         });
 
-        const pc = createPeerConnection(member.userId, member.socketId);
+        const pc = createPeerConnection(peerId, member.socketId);
 
         try {
           const offer = await pc.createOffer();
@@ -420,7 +408,7 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
             channelId,
           });
 
-          console.log("[WebRTC] Sent offer to", member.userId);
+          console.log("[WebRTC] Sent offer to", peerId);
         } catch (err) {
           console.error("[WebRTC] Error creating offer:", err);
         }
@@ -437,14 +425,17 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       muted,
     }) => {
       console.log("[WebRTC] User joined:", remoteId, remoteName, "socketId:", remoteSocketId);
-      if (remoteId === userId) return; // Skip self
+      if (remoteSocketId === socket.id) return; // Skip self
+      const peerId = remoteSocketId;
 
       setParticipants((prev) => {
-        if (prev.find((p) => p.userId === remoteId)) return prev;
+        if (prev.find((p) => (p.peerId || p.userId) === peerId)) return prev;
         return [
           ...prev,
           {
-            userId: remoteId,
+            peerId,
+            socketId: remoteSocketId,
+            userId: remoteId || peerId,
             userName: remoteName,
             muted: muted || false,
             videoOff: videoOff || false,
@@ -455,20 +446,43 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
       });
 
       // Do NOT send an offer to avoid glare. Create the connection and wait for their offer.
-      createPeerConnection(remoteId, remoteSocketId);
+      createPeerConnection(peerId, remoteSocketId);
     };
 
     // Receive offer → send answer
-    const onOffer = async ({ fromSocketId, fromUserId, offer, isRenegotiation }) => {
-      const remoteId = fromUserId || fromSocketId;
+    const onOffer = async ({ fromSocketId, fromUserId, fromUserName, offer, userObject }) => {
+      const remotePeerId = fromSocketId;
+      const remoteUserId = fromUserId || fromSocketId;
+      if (!remotePeerId) return;
 
-      const pc = createPeerConnection(remoteId, fromSocketId);
+      setParticipants((prev) => {
+        if (prev.find((p) => (p.peerId || p.userId) === remotePeerId)) return prev;
+        return [
+          ...prev,
+          {
+            peerId: remotePeerId,
+            socketId: fromSocketId,
+            userId: remoteUserId,
+            userName: fromUserName || userObject?.name || "Unknown",
+            muted: false,
+            videoOff: false,
+            hand: false,
+            userObject,
+          },
+        ];
+      });
+
+      const pc = createPeerConnection(remotePeerId, fromSocketId);
 
       try {
-        // ✅ Rollback only if we're in the middle of our own offer exchange
-        if (pc.signalingState !== "stable") {
+        // Roll back only if a stale/local offer exists, then answer the peer's offer.
+        if (pc.signalingState === "have-local-offer") {
           console.log("[WebRTC] Rolling back before applying new offer");
           await pc.setLocalDescription({ type: "rollback" });
+        }
+        if (pc.signalingState !== "stable") {
+          console.warn("[WebRTC] Ignoring offer in signaling state:", pc.signalingState);
+          return;
         }
 
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
@@ -483,15 +497,15 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
         });
 
         // Flush any queued ICE candidates
-        if (iceCandidateQueue.current[remoteId]) {
-          for (const cand of iceCandidateQueue.current[remoteId]) {
+        if (iceCandidateQueue.current[remotePeerId]) {
+          for (const cand of iceCandidateQueue.current[remotePeerId]) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(cand));
             } catch (e) {
               console.error("[WebRTC] Queued ICE error after offer:", e);
             }
           }
-          iceCandidateQueue.current[remoteId] = [];
+          iceCandidateQueue.current[remotePeerId] = [];
         }
       } catch (err) {
         console.error("[WebRTC] Offer handling error:", err);
@@ -501,72 +515,84 @@ export function useWebRTC({ socket, channelId, userId, userName }) {
     // Receive answer
     const onAnswer = async ({ fromSocketId, fromUserId, fromUserName, answer, userObject }) => {
       console.log("[WebRTC] Received answer from", fromUserId);
-      const remoteId = fromUserId || fromSocketId;
-      const pc = peerConnections.current[remoteId];
+      const remotePeerId = fromSocketId;
+      const pc = peerConnections.current[remotePeerId];
 
       // Update participant with user object if available
-      if (userObject) {
-        setParticipants((prev) =>
-          prev.map((p) => (p.userId === remoteId ? { ...p, userObject } : p))
-        );
-      }
+      setParticipants((prev) =>
+        prev.map((p) =>
+          (p.peerId || p.userId) === remotePeerId
+            ? {
+                ...p,
+                ...(fromUserId && { userId: fromUserId }),
+                ...(fromUserName && { userName: fromUserName }),
+                ...(userObject && { userObject }),
+              }
+            : p
+        )
+      );
 
       if (pc) {
         try {
+          if (pc.signalingState !== "have-local-offer") {
+            console.warn("[WebRTC] Ignoring answer in signaling state:", pc.signalingState);
+            return;
+          }
           await pc.setRemoteDescription(new RTCSessionDescription(answer));
-          console.log("[WebRTC] Set remote description from answer (userId:", remoteId, ")");
+          console.log("[WebRTC] Set remote description from answer (peerId:", remotePeerId, ")");
 
           // Flush ICE queue
-          if (iceCandidateQueue.current[remoteId]) {
-            for (const cand of iceCandidateQueue.current[remoteId]) {
+          if (iceCandidateQueue.current[remotePeerId]) {
+            for (const cand of iceCandidateQueue.current[remotePeerId]) {
               try {
                 await pc.addIceCandidate(new RTCIceCandidate(cand));
               } catch (e) {
                 console.error("[WebRTC] Queued ICE error:", e);
               }
             }
-            iceCandidateQueue.current[remoteId] = [];
+            iceCandidateQueue.current[remotePeerId] = [];
           }
         } catch (err) {
           console.error("[WebRTC] Error setting remote description:", err);
         }
       } else {
-        console.warn("[WebRTC] Received answer but no peer connection for userId:", remoteId);
+        console.warn("[WebRTC] Received answer but no peer connection for peerId:", remotePeerId);
       }
     };
 
     // Receive ICE candidate
-    const onIceCandidate = async ({ fromSocketId, fromUserId, candidate }) => {
-      const remoteId = fromUserId || fromSocketId;
-      const pc = peerConnections.current[remoteId];
+    const onIceCandidate = async ({ fromSocketId, candidate }) => {
+      const remotePeerId = fromSocketId;
+      const pc = peerConnections.current[remotePeerId];
       if (pc) {
         if (pc.remoteDescription && pc.remoteDescription.type) {
           try {
             await pc.addIceCandidate(new RTCIceCandidate(candidate));
           } catch (e) {
-            console.error("[WebRTC] ICE candidate error for", remoteId, ":", e);
+            console.error("[WebRTC] ICE candidate error for", remotePeerId, ":", e);
           }
         } else {
           // Queue candidate until remote description is set
-          if (!iceCandidateQueue.current[remoteId]) iceCandidateQueue.current[remoteId] = [];
-          iceCandidateQueue.current[remoteId].push(candidate);
+          if (!iceCandidateQueue.current[remotePeerId]) iceCandidateQueue.current[remotePeerId] = [];
+          iceCandidateQueue.current[remotePeerId].push(candidate);
         }
       } else {
-        console.warn("[WebRTC] Received ICE candidate but no peer connection for userId:", remoteId);
+        console.warn("[WebRTC] Received ICE candidate but no peer connection for peerId:", remotePeerId);
       }
     };
 
     // User left
     const onUserLeft = ({ socketId, userId: remoteId }) => {
-      console.log("[WebRTC] User left:", remoteId);
-      removePeerConnection(remoteId);
+      const peerId = socketId || remoteId;
+      console.log("[WebRTC] User left:", peerId);
+      removePeerConnection(peerId);
     };
 
     // Mute/video status update from others
     const onParticipantUpdate = ({ socketId, userId: remoteId, muted, videoOff, hand, screenSharing }) => {
       setParticipants((prev) =>
         prev.map((p) =>
-          p.userId === remoteId
+          (socketId ? (p.peerId || p.userId) === socketId : p.userId === remoteId)
             ? {
                 ...p,
                 ...(muted !== undefined && { muted }),

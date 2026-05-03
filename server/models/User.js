@@ -14,17 +14,17 @@ const userSchema = new mongoose.Schema({
   isActive: { type: Boolean, default: true }
 }, { timestamps: true });
 
-userSchema.pre('save', async function(next) {
+userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
   this.password = await bcrypt.hash(this.password, 12);
   next();
 });
 
-userSchema.methods.comparePassword = function(candidate) {
+userSchema.methods.comparePassword = function (candidate) {
   return bcrypt.compare(candidate, this.password);
 };
 
-userSchema.methods.toPublic = function() {
+userSchema.methods.toPublic = function () {
   const obj = this.toObject();
   delete obj.password;
   return obj;

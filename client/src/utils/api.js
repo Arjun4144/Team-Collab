@@ -1,6 +1,8 @@
 import axios from 'axios';
 
-const API_URL = 'https://team-collab-back.onrender.com/api';
+const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const API_URL = process.env.REACT_APP_API_URL
+  || (isLocalHost ? 'http://localhost:5000/api' : 'https://team-collab-back.onrender.com/api');
 
 const api = axios.create({
   baseURL: API_URL,

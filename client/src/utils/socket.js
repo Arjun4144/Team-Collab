@@ -4,9 +4,10 @@ let socket = null;
 
 export const getSocket = () => socket;
 
-// Always connect to the deployed backend.
-// Must match the Axios baseURL origin for consistency.
-const SOCKET_URL = 'https://team-collab-back.onrender.com';
+// Match Axios' backend origin: local server in dev, deployed server in production.
+const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL
+  || (isLocalHost ? 'http://localhost:5000' : 'https://team-collab-back.onrender.com');
 
 export const initSocket = (token) => {
   if (socket) socket.disconnect();
@@ -24,8 +25,8 @@ export const initSocket = (token) => {
   socket.on('connect_error', (err) => console.error('[socket] connect error:', err.message));
   socket.on('disconnect', (reason) => console.warn('[socket] disconnected:', reason));
  
-  // Debug: log ALL incoming events when VITE_SOCKET_DEBUG=true
-  if (import.meta.env.VITE_SOCKET_DEBUG === 'true') {
+  // Debug: log ALL incoming events when REACT_APP_SOCKET_DEBUG=true
+  if (process.env.REACT_APP_SOCKET_DEBUG === 'true') {
     socket.onAny((event, ...args) => console.log('[socket event]', event, args));
   }
  
